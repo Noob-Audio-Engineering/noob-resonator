@@ -55,5 +55,8 @@ fn the_largest_object_that_fits_is_the_one_the_readme_quotes() {
         .expect("something has to fit");
     assert_eq!((name, n), ("Plate", 265), "the README quotes this pair");
     // "Several times over" is the README's phrase; hold it to at least ten.
-    assert!(BUDGET / n >= 10, "{n} partials is not several times under {BUDGET}");
+    assert!(
+        BUDGET / n >= 10,
+        "{n} partials is not several times under {BUDGET}"
+    );
 }
