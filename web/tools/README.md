@@ -1,4 +1,4 @@
-# Five things that check the page, and what each one can prove
+# Six things that check the page, and what each one can prove
 
 These are in the repository rather than in a session scratchpad for the reason
 the engine's `tools/README.md` gives: a check that is lost is a check nobody
@@ -95,6 +95,30 @@ faults caught here were two internally consistent halves disagreeing — an obje
 table keyed by index while the page looked up by string, a `uses` array naming
 a parameter that had been renamed, contact coordinates the audio thread did not
 use — and every one of them was invisible until something read the live one.
+
+## `follows.mjs` — does the bank keep up while a knob is turning?
+
+```sh
+node tools/follows.mjs http://localhost:5173/ 3
+```
+
+Sweeps Tune from the bottom of its travel with no pause long enough to count as
+letting go, sampling the control, the display's axis and the lowest partial the
+engine is actually publishing.
+
+**The failure it looks for is the one that hides.** A bank frozen on its old
+mode set still *looks* like it is following, because the control readout moves
+whether or not the audio thread rebuilt anything — and the engine's own author
+flagged that restarting the search on every settings change would cause exactly
+that under host automation. So this compares the knob against the partials, and
+then the two halves of the picture against each other: **a partial drawn at
+1630 Hz under a ruler whose 1x is 4000 Hz appears at 0.4x**, and a reader has no
+way to know they are looking at two different moments.
+
+The knob leading the engine mid-gesture is correct and expected — the control is
+what you asked for, the display is what is being synthesised. What is not
+correct is the axis and the partials coming from different states, which this
+catches and which the page cannot fix on its own.
 
 ## `extremes.mjs` — every control at both ends, on every object
 

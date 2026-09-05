@@ -147,15 +147,16 @@ const hasCeiling = computed(() => info.declares('ceiling_hz'));
       <!--
         A number that cannot be a count is not a measurement, and saying so is
         not the same as showing a dash. This fired for real: with the
-        fundamental driven above Nyquist the engine had nothing under the axis
-        and published `modes_available` as an unsigned underflow, which this
-        strip rendered faithfully as "this object has 18446744073709552.0 k
-        partials". The value is refused now and the refusal is what you read.
+        fundamental driven to 1.2 Hz the object had more partials under Nyquist
+        than a count can hold, and `modes_available` arrived as 1.8446744e19 —
+        which this strip rendered faithfully as "this object has
+        18446744073709552.0 k partials". The value is refused now and the
+        refusal is what you read.
       -->
       <template v-if="info.bogusCounts.length">
         <b>The engine published a partial count that cannot be one</b> ({{ info.bogusCounts.join(', ') }}),
-        so the figures above are blank rather than wrong. It is the sort of number an unsigned subtraction
-        gives when it runs past zero, and it is worth reporting rather than reading.
+        so the figures above are blank rather than wrong. A count has to be a whole number of things and
+        this one is not, so it is worth reporting rather than reading.
       </template>
       <template v-else-if="!info.has || !info.live">
         This build publishes no <code>info</code> stream, so how many partials the object has and how many the

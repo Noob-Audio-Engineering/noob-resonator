@@ -124,15 +124,16 @@ test('a longer layout does not break a shorter reader', () => {
 // ---------------------------------------------------------------------------
 
 test('a number that cannot be a count is not read as one', () => {
-  // **The real frame this came from.** With the fundamental driven above
-  // Nyquist the engine had no partials under the axis and published
-  // `modes_available` as 1.8446744e19 — an unsigned 64-bit subtraction that
-  // ran past zero, cast to a float. The panel printed it faithfully as "this
-  // object has 18446744073709552.0 k partials", which is the same class of
-  // failure as the zero-filled frame: a number arriving in the right field, in
-  // the right units, that nothing measured.
+  // **The real frame this came from.** With the fundamental driven to 1.2 Hz a
+  // membrane genuinely has of the order of a hundred million partials under
+  // Nyquist, and `modes_available` arrived as 1.8446744e19 — `u64::MAX`, from
+  // an unsigned cast of an infinity rather than from a subtraction running past
+  // zero. The panel printed it faithfully as "this object has
+  // 18446744073709552.0 k partials", which is the same class of failure as the
+  // zero-filled frame: a number arriving in the right field, in the right
+  // units, that nothing measured.
   const layout = parseLayout('modes_used,modes_available');
-  assert.equal(countAt([12, 1.8446744073709552e19], layout, 'modes_available'), null, 'the underflow');
+  assert.equal(countAt([12, 1.8446744073709552e19], layout, 'modes_available'), null, 'the impossible count');
   assert.equal(countAt([12, 1.8446744073709552e19], layout, 'modes_used'), 12, 'and the field beside it survives');
 
   assert.equal(isCount(0), true, 'zero is a count, and a real one');

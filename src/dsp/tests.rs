@@ -1671,6 +1671,75 @@ fn a_control_moving_every_block_still_lets_the_bank_follow() {
 }
 
 #[test]
+fn the_parameters_that_are_counts_say_so_and_nothing_else_moved() {
+    // The panel was printing "24.0" for a bank of 24 modes, and I tried twice
+    // to make the *value* whole before concluding it could not be done here:
+    // `steps` and a table taper both snap in the normalized domain before the
+    // log taper, so a preset asking for 1,024 modes loads as 1,021. Measured,
+    // both times, which is the only reason the conclusion is worth anything.
+    //
+    // `decimals` is the answer the framework grew for it, and it is a
+    // statement about the value rather than a change to it. **So the property
+    // worth testing is that nothing moved** — the failure it replaces was a
+    // fix that quietly moved the value, and a hint that rounds would be that
+    // fix wearing a different name.
+    let specs = param_specs(false);
+    let spec = |id: &str| {
+        specs
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("no parameter `{id}`"))
+    };
+
+    // Exactly the counts, and no others. `fine` is the one that has to stay
+    // out: a cent is a real quantity and 12.5 of them means something.
+    let declared: Vec<&str> = specs
+        .iter()
+        .filter(|s| s.decimals == Some(0))
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(
+        declared,
+        vec!["transpose", "mode_budget"],
+        "the parameters declaring themselves whole numbers are not the ones that are"
+    );
+    assert_eq!(spec("fine").decimals, None, "a cent is not a whole number");
+
+    // The values a preset or a saved session actually carries, through the
+    // same normalize/denormalize the bridge uses. These are the numbers that
+    // came back as 1,021 under both of the fixes that changed the value.
+    let budget = spec("mode_budget");
+    for want in [4.0f32, 8.0, 24.0, 128.0, 512.0, 1024.0, 4096.0] {
+        let got = budget.denormalize(budget.normalize(want));
+        assert!(
+            (got - want).abs() <= 0.001 * want,
+            "Modes at {want} comes back as {got}"
+        );
+        assert_eq!(
+            got.round(),
+            want,
+            "Modes at {want} rounds to {} in the engine",
+            got.round()
+        );
+    }
+
+    // And Transpose really is whole at every step, which is what lets it be
+    // declared without a hint doing any work: 97 steps over a linear -48..48.
+    let tr = spec("transpose");
+    for step in 0..97 {
+        let n = step as f32 / 96.0;
+        let got = tr.denormalize(n);
+        assert_eq!(
+            got,
+            got.round(),
+            "Transpose step {step} is {got}, which is not a whole semitone"
+        );
+    }
+    assert_eq!(tr.denormalize(0.0), -48.0);
+    assert_eq!(tr.denormalize(1.0), 48.0);
+}
+
+#[test]
 fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
     // Found live by the panel agent, driving every control to both ends: a
     // string at negative Inharm published 18,446,744,073,709,551,615

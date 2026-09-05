@@ -535,12 +535,12 @@ export function useInfo() {
     /**
      * Count fields the engine published that cannot be counts.
      *
-     * Printed rather than swallowed. Driving the fundamental above Nyquist
-     * left the engine with nothing under the axis and `modes_available`
-     * arriving as 1.8446744e19 — an unsigned underflow cast to a float — which
-     * the panel rendered, faithfully and absurdly, as *this object has
-     * 18446744073709552.0 k partials*. The number is refused now, and this is
-     * how the face says it was refused rather than merely missing.
+     * Printed rather than swallowed. Driving the fundamental to 1.2 Hz gave
+     * the object more partials under Nyquist than a count can hold, and
+     * `modes_available` arrived as 1.8446744e19 — which the panel rendered,
+     * faithfully and absurdly, as *this object has 18446744073709552.0 k
+     * partials*. The number is refused now, and this is how the face says it
+     * was refused rather than merely missing.
      */
     bogusCounts: computed(() => {
       const f = frame.value;

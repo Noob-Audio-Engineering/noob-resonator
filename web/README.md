@@ -661,9 +661,12 @@ publishes `NaN` for the same fields the engine does, so design mode cannot
 teach a lesson live mode contradicts.
 
 **A count that cannot be a count is not printed.** With the fundamental driven
-to 1.2 Hz the engine had more partials under Nyquist than a `usize` could hold
-and published `modes_available` as an unsigned underflow; the strip rendered it
-faithfully as *this object has 18446744073709552.0 k partials*. So the
+to 1.2 Hz a membrane genuinely has of the order of a hundred million partials
+under Nyquist, and `modes_available` arrived as 1.8446744e19 — `u64::MAX`, from
+an unsigned cast of an infinity rather than from a subtraction running past
+zero, because the inharmonicity's asymptote means every partial an ideal string
+has really can fit under the axis. The strip rendered it faithfully as *this
+object has 18446744073709552.0 k partials*. So the
 absent-not-plausible rule carries one step further for the fields that are
 counts of things: finite, whole, not negative, and inside 2²⁴, past which a
 float no longer spaces integers one apart. **Refusing it quietly would have
@@ -822,6 +825,7 @@ designing is not quietly wrong.
 | `tools/preset-e2e.mjs` | presets against a running plug-in, which is the only place they prove anything — `npm run presets:e2e` |
 | `tools/extremes.mjs` | every control at both ends on every object, and whether the instrument comes back — `npm run extremes` |
 | `tools/contract.mjs` | the live manifest against every claim the panel makes on screen; no browser — `npm run contract` |
+| `tools/follows.mjs` | whether the bank keeps up while a knob is turning, and whether the axis and the partials come from the same state — `npm run follows` |
 | `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
 | `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
 | `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |

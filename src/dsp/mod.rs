@@ -245,9 +245,16 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
             .default(d.tune_hz)
             .unit("Hz")
             .group("body"),
+        // Whole semitones, and already exactly whole: `steps` over a linear
+        // taper lands on the integers themselves, which `tests.rs` checks
+        // rather than assumes. Saying so is what stops a page printing
+        // "-12.0 st" for an octave down. `fine` beside it is deliberately
+        // **not** declared — a cent is a real quantity there and 12.5 of them
+        // means something.
         ParamSpec::new("transpose", "Transpose")
             .range(-48.0, 48.0)
             .steps(97)
+            .integer()
             .default(d.transpose)
             .unit("st")
             .group("body"),
@@ -256,17 +263,22 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
             .default(d.fine_cents)
             .unit("ct")
             .group("body"),
-        // **A count, published as a continuous log taper, and the fraction
-        // is real.** The engine rounds it to a whole number of resonators,
-        // so a page must round it too or it prints "24.0" for a bank of 24.
-        // Neither `steps` nor a table taper can fix that here and both cost
-        // fidelity: they snap in the normalized domain, so a preset asking
-        // for 1,024 modes loads as 1,021. Measured, not assumed. The manifest
-        // has no way to say "this one is a count", which is a gap in the
-        // framework rather than in this plug-in.
+        // **A count, so it says so.** The engine rounds this to a whole
+        // number of resonators, and the value carries a fraction the engine
+        // does not honour, so a page that formats it plainly prints "24.0"
+        // for a bank of 24.
+        //
+        // `integer()` is a statement about the value and not a change to it,
+        // which is the only shape that works here. The two ways of making the
+        // value itself whole — `steps`, and a table taper of whole numbers —
+        // both snap in the normalized domain before the log taper, so a
+        // preset asking for 1,024 modes loads as **1,021**. Measured on both
+        // rather than assumed, which is why this is a hint and nothing here
+        // rounds.
         ParamSpec::new("mode_budget", "Modes")
             .range(4.0, bank::MAX_MODES as f32)
             .log()
+            .integer()
             .default(d.modes as f32)
             .group("body"),
         ParamSpec::new("select", "Selection")

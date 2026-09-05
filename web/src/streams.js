@@ -87,12 +87,19 @@ export const COUNT_MAX = 2 ** 24;
  * **A number that cannot be a count is not a measurement, and the panel does
  * not print it.** This is the same rule as "a non-finite value means not
  * computed", carried one step further, and it exists because of a real frame:
- * with the fundamental driven above Nyquist the engine had nothing under the
- * axis and published `modes_available` as 1.8446744e19 — an unsigned 64-bit
- * underflow, `0 - 1`, cast to a float. The panel printed it faithfully as
- * *this object has 18446744073709552.0 k partials*, which is the failure this
- * project keeps meeting from the other side: a number arriving in the right
- * field, in the right units, that nothing measured.
+ * with the fundamental driven to 1.2 Hz the object had more partials under
+ * Nyquist than a count can hold, and `modes_available` arrived as
+ * **1.8446744e19** — which is `u64::MAX`, but by an unsigned *cast of an
+ * infinity* rather than by a subtraction running past zero. The engine's
+ * inharmonicity has a real asymptote, so above it every partial an ideal
+ * string has genuinely does fit under the axis: infinitely many, in a finite
+ * band. That is true, and it is simply not a number a count can be.
+ *
+ * The panel printed it faithfully as *this object has 18446744073709552.0 k
+ * partials*, which is the failure this project keeps meeting from the other
+ * side: a number arriving in the right field, in the right units, that nothing
+ * measured. **The rule does not depend on the cause** — which is the point of
+ * putting it here rather than waiting for the engine to be right.
  *
  * Refusing it is not the same as hiding it. The reader that uses this also
  * reports which fields it refused, so the panel says the engine published
