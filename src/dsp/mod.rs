@@ -404,12 +404,6 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
             .unit("mm")
             .group("body"),
         pct("opening", "Opening", d.opening * 100.0, "body"),
-        // **How far the bore is from an ideal cylinder**, which is the
-        // physical claim: a smooth rigid cylinder is very nearly
-        // non-dispersive, which is why an organ pipe is nearly harmonic, and
-        // a bore that flares, narrows or has yielding walls is not. At zero
-        // the column is exactly the one the terminations imply.
-        pct("disperse", "Disperse", d.disperse * 100.0, "body"),
         ParamSpec::new("decay", "Decay")
             .range(0.02, 60.0)
             .log()
@@ -611,7 +605,6 @@ pub fn object_meta() -> Value {
             uses.push("pos_l");
             uses.push("pos_r");
             uses.push("bright");
-            uses.push("disperse");
             if *object == Object::Pipe {
                 uses.push("opening");
             }
@@ -729,7 +722,6 @@ pub struct ParamIx {
     pub voice: [usize; CHORD_VOICES],
     pub radius: usize,
     pub opening: usize,
-    pub disperse: usize,
     pub decay: usize,
     pub material: usize,
     pub damp_corner: usize,
@@ -784,7 +776,6 @@ pub fn param_index(s: &NoobVstWebguiFramework) -> ParamIx {
         voice: std::array::from_fn(|k| ix(VOICE_IDS[k])),
         radius: ix("radius"),
         opening: ix("opening"),
-        disperse: ix("disperse"),
         decay: ix("decay"),
         material: ix("material"),
         damp_corner: ix("damp_corner"),
@@ -848,7 +839,6 @@ pub fn read_settings(audio: &AudioHandle, ix: &ParamIx) -> Settings {
         },
         radius_mm: p(ix.radius),
         opening: p(ix.opening) / 100.0,
-        disperse: p(ix.disperse) / 100.0,
         decay_s: p(ix.decay),
         material: p(ix.material),
         damp_corner_hz: p(ix.damp_corner),

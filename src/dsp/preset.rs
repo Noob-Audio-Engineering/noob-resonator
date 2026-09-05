@@ -156,7 +156,6 @@ pub fn settings_values(s: &Settings) -> Map<String, Value> {
     }
     put("radius", s.radius_mm);
     put("opening", s.opening * 100.0);
-    put("disperse", s.disperse * 100.0);
     put("decay", s.decay_s);
     put("material", s.material);
     put("damp_corner", s.damp_corner_hz);

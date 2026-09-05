@@ -654,7 +654,6 @@ fn an_open_tube_gives_every_harmonic_and_a_stopped_pipe_gives_the_odd_ones() {
             tilt_db_oct: 0.0,
             hit: 0.13,
             pos_l: 0.31,
-            disperse: 0.0,
             pos_r: 0.53,
         });
         let res = g.resonances();
@@ -739,7 +738,6 @@ fn striking_a_column_at_a_third_of_its_length_nulls_every_third_harmonic() {
             tilt_db_oct: 0.0,
             hit,
             pos_l: 0.13,
-            disperse: 0.0,
             pos_r: 0.13,
         });
         g.resonances()
@@ -762,6 +760,146 @@ fn striking_a_column_at_a_third_of_its_length_nulls_every_third_harmonic() {
             assert!(
                 change > -6.0,
                 "partial {} is not a multiple of three and fell {change:.1} dB",
+                k + 1
+            );
+        }
+    }
+}
+
+/// One air column, struck once.
+fn ring_guide(s: &guide::Settings, samples: usize) -> Vec<f32> {
+    let mut g = guide::Guide::new(SR);
+    g.configure(s);
+    let mut inp = vec![0.0f32; samples];
+    inp[0] = 1.0;
+    let mut l = vec![0.0f32; samples];
+    let mut r = vec![0.0f32; samples];
+    g.process(&inp, &mut l, &mut r);
+    l
+}
+
+/// The magnitude spectrum of a capture, zero-padded so that a peak between
+/// two bins can still be interpolated.
+///
+/// **No window**, which is a choice and not an omission: the capture is long
+/// enough that the ring has decayed into the float floor before it ends, so
+/// there is no truncation step for a window to taper and a window would only
+/// add its own bias to the peak position. The transform is in `f64` because
+/// the quantity read off it is a cent at fourteen kilohertz.
+fn spectrum(sig: &[f32], n_fft: usize) -> Vec<f64> {
+    use rustfft::FftPlanner;
+    use rustfft::num_complex::Complex;
+    let mut buf = vec![Complex::new(0.0f64, 0.0f64); n_fft];
+    for (i, s) in sig.iter().enumerate().take(n_fft) {
+        buf[i] = Complex::new(*s as f64, 0.0);
+    }
+    FftPlanner::new().plan_fft_forward(n_fft).process(&mut buf);
+    buf[..n_fft / 2].iter().map(|c| c.norm()).collect()
+}
+
+/// The frequency of the spectral peak within `window_cents` of `target`, or
+/// NaN when there is no clean interior maximum there.
+///
+/// The window is given in cents rather than hertz so that it stays safely
+/// inside the partial spacing at every frequency: at the twentieth harmonic
+/// the neighbours are eighty-five cents away, so a forty-cent window cannot
+/// straddle one and report somebody else's partial as this one's.
+fn peak_near(mag: &[f64], sr: f64, target: f64, window_cents: f64) -> f64 {
+    let bin = sr / (mag.len() * 2) as f64;
+    let span = target * (2f64.powf(window_cents / 1200.0) - 1.0);
+    let w = ((span / bin) as usize).max(2);
+    let k0 = (target / bin).round() as usize;
+    let lo = k0.saturating_sub(w).max(2);
+    let hi = (k0 + w).min(mag.len() - 3);
+    let mut best = lo;
+    for k in lo..=hi {
+        if mag[k] > mag[best] {
+            best = k;
+        }
+    }
+    if best <= lo || best >= hi {
+        return f64::NAN;
+    }
+    // Parabolic interpolation on the log magnitude, which is the right shape
+    // for the top of a resonance. A flat or upward-curving triple is not a
+    // peak and is refused rather than extrapolated: an unguarded parabola
+    // there walks thousands of bins away and returns a confident number.
+    let (a, b, c) = (
+        mag[best - 1].max(1e-300).ln(),
+        mag[best].max(1e-300).ln(),
+        mag[best + 1].max(1e-300).ln(),
+    );
+    let den = a - 2.0 * b + c;
+    if den >= 0.0 {
+        return f64::NAN;
+    }
+    let d = 0.5 * (a - c) / den;
+    if d.abs() > 0.5 {
+        return f64::NAN;
+    }
+    (best as f64 + d) * bin
+}
+
+#[test]
+fn an_air_column_rings_at_the_frequencies_it_publishes() {
+    // The bank has `a_mode_rings_at_the_frequency_it_was_given`; the air
+    // column had nothing of the kind. Everything published about a column —
+    // the `modes` table, the response curve, the length and the round trip —
+    // comes from the same closed-form algebra that also sizes the delay line,
+    // so **the model can agree with itself while disagreeing with the
+    // audio**, and no test that reads `resonances()` can see it.
+    //
+    // So this one strikes the column, transforms what comes out, finds each
+    // peak and compares it with the table the engine published for those
+    // settings.
+    //
+    // The contacts are at a thirty-second and a fiftieth of the length, so
+    // that the first null of the strike comb and of either pickup comb falls
+    // above the twentieth partial, which is the last one asserted. A partial
+    // the geometry has nulled has no peak to find, and its absence would read
+    // as a failure of the loop rather than as the correct behaviour it is.
+    //
+    // **The pass mark is half a cent and not a hundredth**, and the reason is
+    // a real difference between the two quantities rather than slack in the
+    // measurement. `resonances()` publishes where the loop's **pole** is, from
+    // the phase condition; a transform finds where the **peak** of the
+    // magnitude is, and a resonance sitting on the skirt of its neighbours and
+    // on the direct path from the strike to the pickup peaks a little off its
+    // own pole. The offset is a property of the width: measured across the
+    // first twenty partials it is 4.2 cents at a half-second decay, 0.24 at
+    // four seconds and 0.06 at sixteen. Four seconds is chosen so the
+    // remainder is small without the capture having to be long enough for a
+    // sixteen-second ring to leave it.
+    const N: usize = 1 << 18;
+    const NFFT: usize = 1 << 20;
+    for (name, opening) in [("an open tube", 1.0f32), ("a stopped pipe", 0.0)] {
+        let set = guide::Settings {
+            f0: 220.0,
+            opening,
+            radius_mm: 20.0,
+            decay: 4.0,
+            tilt_db_oct: 0.0,
+            hit: 0.031,
+            pos_l: 0.019,
+            pos_r: 0.037,
+        };
+        let mut g = guide::Guide::new(SR);
+        g.configure(&set);
+        let published: Vec<f64> = g.resonances().iter().map(|r| r.hz as f64).collect();
+        let mag = spectrum(&ring_guide(&set, N), NFFT);
+        for (k, want) in published.iter().enumerate().take(20) {
+            let got = peak_near(&mag, SR as f64, *want, 40.0);
+            assert!(
+                got.is_finite(),
+                "{name} publishes resonance {} at {want:.4} Hz and the audio has no peak \
+                 within forty cents of it",
+                k + 1
+            );
+            let err = 1200.0 * (got / want).log2();
+            assert!(
+                err.abs() < 0.5,
+                "{name} publishes resonance {} at {want:.4} Hz and rings at {got:.4} Hz, \
+                 {err:+.3} cents away",
                 k + 1
             );
         }
@@ -2306,7 +2444,6 @@ fn midi_overrides_the_voice_pitches_and_never_writes_them() {
         tune_hz: 220.0,
         voices: 3,
         midi_voices: true,
-        disperse: 0.31,
         voice_semis: manual,
         ..Settings::default()
     };
@@ -2950,7 +3087,6 @@ fn every_setting_survives_a_preset_round_trip() {
         bar_third: 1,
         voices: 5,
         midi_voices: true,
-        disperse: 0.31,
         voice_semis: [-5.0, 2.0, 9.0, 14.0, 21.0, 33.0],
         radius_mm: 47.0,
         opening: 0.37,
@@ -3628,44 +3764,6 @@ fn a_clamped_plate_is_held_flat_at_its_rim() {
         assert!(
             (mean - 1.0).abs() < 1e-3,
             "clamped plate mode ({m},{n}) integrates to {mean}"
-        );
-    }
-}
-
-#[test]
-fn scratch_disp() {
-    for disperse in [0.0f32, 0.25, 0.5, 1.0] {
-        let mut g = guide::Guide::new(SR);
-        g.configure(&guide::Settings {
-            f0: 220.0,
-            opening: 1.0,
-            radius_mm: 20.0,
-            decay: 4.0,
-            tilt_db_oct: 0.0,
-            disperse,
-            hit: 0.107,
-            pos_l: 0.213,
-            pos_r: 0.379,
-        });
-        let r = g.resonances();
-        let f1 = r.first().map(|x| x.hz).unwrap_or(0.0);
-        let show: Vec<String> = [1usize, 3, 7, 15]
-            .iter()
-            .filter_map(|k| r.get(*k))
-            .map(|x| {
-                format!(
-                    "{:.1}",
-                    1200.0
-                        * (x.hz
-                            / (f1 * (r.iter().position(|y| y.hz == x.hz).unwrap() as f32 + 1.0)))
-                            .log2()
-                )
-            })
-            .collect();
-        println!(
-            "disperse {disperse}: f1={f1:.2} n={} stretch(cents at 2,4,8,16)={:?}",
-            r.len(),
-            show
         );
     }
 }

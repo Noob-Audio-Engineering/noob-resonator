@@ -186,8 +186,6 @@ pub struct Settings {
     pub voices: usize,
     /// Whether held MIDI notes set the voice pitches.
     pub midi_voices: bool,
-    /// How far the bore is from an ideal cylinder, 0 … 1. Air columns only.
-    pub disperse: f32,
     /// Each voice's pitch in semitones from the root, in the user's order.
     pub voice_semis: [f32; CHORD_VOICES],
     pub radius_mm: f32,
@@ -239,7 +237,6 @@ impl Default for Settings {
             bar_third: 0,
             voices: 1,
             midi_voices: false,
-            disperse: 0.0,
             voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
             radius_mm: guide::RADIUS_REF_MM,
             opening: 0.0,
@@ -940,7 +937,6 @@ impl Resonator {
             radius_mm: s.radius_mm,
             decay: s.decay_s,
             tilt_db_oct: s.bright_db_oct,
-            disperse: s.disperse,
             hit: s.hit.x,
             pos_l: s.pos_l.x,
             pos_r: s.pos_r.x,

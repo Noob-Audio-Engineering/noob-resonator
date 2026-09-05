@@ -174,7 +174,6 @@ pub struct NoobResonatorParams {
     pub voice: [IntParam; CHORD_VOICES],
     pub radius: FloatParam,
     pub opening: FloatParam,
-    pub disperse: FloatParam,
     /// T60 at the fundamental, in **seconds**.
     pub decay: FloatParam,
     /// The exponent in `T60(f) = T60(f₁)·(f/f₁)^m`.
@@ -278,7 +277,6 @@ impl Default for NoobResonatorParams {
                 .with_unit(" mm")
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
             opening: pct("Opening", d.opening * 100.0),
-            disperse: pct("Disperse", d.disperse * 100.0),
             decay: FloatParam::new("Decay", d.decay_s, log_range(0.02, 60.0))
                 .with_unit(" s")
                 .with_value_to_string(formatters::v2s_f32_rounded(3)),
@@ -428,7 +426,6 @@ unsafe impl Params for NoobResonatorParams {
             (g("voice6"), self.voice[5].as_ptr(), g("chord")),
             (g("radius"), self.radius.as_ptr(), g("body")),
             (g("opening"), self.opening.as_ptr(), g("body")),
-            (g("disperse"), self.disperse.as_ptr(), g("body")),
             (g("decay"), self.decay.as_ptr(), g("damping")),
             (g("material"), self.material.as_ptr(), g("damping")),
             (g("damp_corner"), self.damp_corner.as_ptr(), g("damping")),
@@ -493,7 +490,6 @@ impl NoobResonatorParams {
             voice_semis: std::array::from_fn(|k| self.voice[k].value() as f32),
             radius_mm: self.radius.value(),
             opening: self.opening.value() / 100.0,
-            disperse: self.disperse.value() / 100.0,
             decay_s: self.decay.value(),
             material: self.material.value(),
             damp_corner_hz: self.damp_corner.value(),
