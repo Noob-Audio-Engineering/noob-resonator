@@ -267,6 +267,8 @@ pub struct Settings {
     pub decay: f32,
     /// Spectral tilt in decibels per octave, applied to the excitation.
     pub tilt_db_oct: f32,
+    /// How dispersive the bore is, 0 … 1. See [`Guide::disp_phase`].
+    pub disperse: f32,
     /// Where the column is struck and where it is heard, as fractions of the
     /// length from the permanently open end.
     pub hit: f32,
@@ -282,6 +284,7 @@ impl Default for Settings {
             radius_mm: RADIUS_REF_MM,
             decay: 2.0,
             tilt_db_oct: 0.0,
+            disperse: 0.0,
             hit: 0.2,
             pos_l: 0.3,
             pos_r: 0.7,
@@ -321,6 +324,12 @@ pub struct Guide {
     half_l: f32,
     /// How many resonances are live.
     live: usize,
+    /// The dispersion allpass in the loop: its coefficient and its two state
+    /// words. Separate from the far end's, which is a *termination* and not a
+    /// colour — see [`Guide::disp_phase`].
+    disp_a: f32,
+    disp_x: f32,
+    disp_y: f32,
     /// The far end, and the allpass state it needs when it is a hole.
     far: Far,
     ap_x: f32,
@@ -348,6 +357,9 @@ impl Guide {
             half_l: 100.0,
             live: 0,
             far: Far::Closed,
+            disp_a: 0.0,
+            disp_x: 0.0,
+            disp_y: 0.0,
             ap_x: 0.0,
             ap_y: 0.0,
             loss_g: 0.99,
@@ -445,6 +457,12 @@ impl Guide {
         let f0 = s.f0.clamp(1.0, sr * 0.45);
         let w0 = std::f32::consts::TAU * f0 / sr;
 
+        // How dispersive the bore is. A first-order allpass reaches its
+        // stiffest useful setting well before `a = 1`, where the group delay
+        // at DC runs away and the loop stops being a column at all, so the
+        // control stops at 0.8.
+        self.disp_a = s.disperse.clamp(0.0, 1.0) * 0.8;
+
         // The far end.
         let o = s.opening.clamp(0.0, 1.0);
         let ob = o * o;
@@ -487,7 +505,7 @@ impl Guide {
                 (-damp::LN1000 * trip / t).exp().clamp(1e-4, 0.999_95)
             };
             self.fit_loss(rho(f0), rho(f_hi), w0, std::f32::consts::TAU * f_hi / sr);
-            let extra = self.loss_phase(w0) + self.allpass_phase(w0);
+            let extra = self.loss_phase(w0) + self.allpass_phase(w0) + self.disp_phase(w0);
             half = 0.5 * ((std::f32::consts::TAU + extra) / w0).max(MIN_LOOP);
             half = half.min((MAX_RAIL - 8) as f32);
         }
@@ -541,6 +559,41 @@ impl Guide {
         -(self.loss_p * s).atan2(1.0 - self.loss_p * c)
     }
 
+    /// The dispersion allpass's phase at `ω`.
+    ///
+    /// **A first-order allpass in the loop makes the round trip take longer
+    /// at low frequencies than at high**, so the resonances stop sitting on
+    /// the exact `n·f₀` lattice and stretch upward — the same mechanism that
+    /// gives a waveguide string model a piano's stiffness inharmonicity.
+    ///
+    /// **The physical claim here is ours and is about the bore.** A perfectly
+    /// cylindrical tube with rigid walls is very nearly non-dispersive, which
+    /// is why an organ pipe is nearly harmonic; a bore that flares, narrows
+    /// or is not smooth is not, and neither is one whose walls yield. So this
+    /// control is "how far from an ideal cylinder", and at zero the column is
+    /// exactly the one the terminations imply.
+    ///
+    /// The research that suggested it reads a similar component in another
+    /// product as doing this, but **that reading is the researcher's
+    /// inference rather than anything its makers state**, so it is recorded
+    /// here as the reason the idea was looked at and not as a source for the
+    /// behaviour.
+    ///
+    /// It is in the length solve for the same reason the loss filter is: it
+    /// moves the loop's phase, so leaving it out would detune the
+    /// fundamental instead of stretching the partials above it.
+    fn disp_phase(&self, w: f32) -> f32 {
+        let a = self.disp_a;
+        if a == 0.0 {
+            return 0.0;
+        }
+        let (sn, cs) = w.sin_cos();
+        // arg A = arg(a + e^{−jω}) − arg(1 + a e^{−jω}), written out so it
+        // agrees term for term with the complex form in `loss_at` rather
+        // than by a remembered identity.
+        (-sn).atan2(a + cs) - (-a * sn).atan2(1.0 + a * cs)
+    }
+
     /// The far end's allpass phase at `ω`.
     ///
     /// `A(e^{jω}) = e^{-jω}·conj(1 + a e^{-jω})/(1 + a e^{-jω})`, so
@@ -575,8 +628,21 @@ impl Guide {
     /// The loss filter at `ω`.
     fn loss_at(&self, w: f32) -> C {
         let e = C::unit(-w);
-        C(self.loss_g * (1.0 - self.loss_p), 0.0)
-            .div(C(1.0 - self.loss_p * e.0, -self.loss_p * e.1))
+        let loss = C(self.loss_g * (1.0 - self.loss_p), 0.0)
+            .div(C(1.0 - self.loss_p * e.0, -self.loss_p * e.1));
+        // **The dispersion allpass rides with the loss filter**, because in
+        // the audio loop it does: both sit once on the return rail. Putting
+        // it here rather than only in the phase sum is what keeps the
+        // published resonances and the drawn response the ones the audio
+        // actually has — a dispersive loop whose display showed a harmonic
+        // ladder would be the engine and the picture disagreeing, which is
+        // the fault this project has spent a day removing.
+        let a = self.disp_a;
+        if a == 0.0 {
+            return loss;
+        }
+        // A(z) = (a + z^-1)/(1 + a z^-1)
+        loss.mul(C(a + e.0, e.1).div(C(1.0 + a * e.0, a * e.1)))
     }
 
     /// The complex response from the input to one pickup, from the loop's own
@@ -653,7 +719,7 @@ impl Guide {
         for n in 1..=(MAX_RESONANCES * 4) {
             let mut w = std::f32::consts::TAU * n as f32 / d;
             for _ in 0..6 {
-                let phase = self.loss_phase(w) + self.allpass_phase(w);
+                let phase = self.loss_phase(w) + self.allpass_phase(w) + self.disp_phase(w);
                 let next = (std::f32::consts::TAU * n as f32 + phase) / d;
                 if next <= 0.0 {
                     break;
@@ -729,9 +795,17 @@ impl Guide {
             // whole round trip's loss in one pole.
             self.loss_z = g * back + p * self.loss_z;
 
+            // The bore's dispersion, once per round trip, on the return
+            // rail: one first-order allpass, and at `a = 0` it is a delay of
+            // one sample that the length solve has already accounted for.
+            let d = self.disp_a;
+            let dy = d * self.loss_z + self.disp_x - d * self.disp_y;
+            self.disp_x = self.loss_z;
+            self.disp_y = dy;
+
             self.right.advance();
             self.left.advance();
-            self.right.write(-self.loss_z);
+            self.right.write(-dy);
             self.left.write(-a_out);
 
             // The strike goes in at its point on the column, in both

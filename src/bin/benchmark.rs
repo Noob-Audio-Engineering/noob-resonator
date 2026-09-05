@@ -662,6 +662,7 @@ fn guide_section() -> Section {
             radius_mm: 20.0,
             decay: 4.0,
             tilt_db_oct: 0.0,
+            disperse: 0.0,
             hit: 0.107,
             pos_l: 0.213,
             pos_r: 0.379,
@@ -724,6 +725,7 @@ fn guide_section() -> Section {
             radius_mm: 20.0,
             decay: 20.0,
             tilt_db_oct: 0.0,
+            disperse: 0.0,
             hit,
             pos_l: 0.13,
             pos_r: 0.13,
@@ -1040,6 +1042,7 @@ fn cost_section() -> Section {
             tilt_db_oct: -3.0,
             hit: 0.107,
             pos_l: 0.213,
+            disperse: 0.0,
             pos_r: 0.379,
         });
         let n = bank::BLOCK;
@@ -1335,6 +1338,7 @@ fn dump_series() {
                     radius_mm: guide::RADIUS_REF_MM,
                     decay: 4.0,
                     tilt_db_oct: 0.0,
+                    disperse: 0.0,
                     hit: 0.107,
                     pos_l: 0.213,
                     pos_r: 0.379,

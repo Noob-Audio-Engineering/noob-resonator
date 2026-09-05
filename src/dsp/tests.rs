@@ -654,6 +654,7 @@ fn an_open_tube_gives_every_harmonic_and_a_stopped_pipe_gives_the_odd_ones() {
             tilt_db_oct: 0.0,
             hit: 0.13,
             pos_l: 0.31,
+            disperse: 0.0,
             pos_r: 0.53,
         });
         let res = g.resonances();
@@ -738,6 +739,7 @@ fn striking_a_column_at_a_third_of_its_length_nulls_every_third_harmonic() {
             tilt_db_oct: 0.0,
             hit,
             pos_l: 0.13,
+            disperse: 0.0,
             pos_r: 0.13,
         });
         g.resonances()
@@ -2304,6 +2306,7 @@ fn midi_overrides_the_voice_pitches_and_never_writes_them() {
         tune_hz: 220.0,
         voices: 3,
         midi_voices: true,
+        disperse: 0.31,
         voice_semis: manual,
         ..Settings::default()
     };
@@ -2947,6 +2950,7 @@ fn every_setting_survives_a_preset_round_trip() {
         bar_third: 1,
         voices: 5,
         midi_voices: true,
+        disperse: 0.31,
         voice_semis: [-5.0, 2.0, 9.0, 14.0, 21.0, 33.0],
         radius_mm: 47.0,
         opening: 0.37,
@@ -3624,6 +3628,44 @@ fn a_clamped_plate_is_held_flat_at_its_rim() {
         assert!(
             (mean - 1.0).abs() < 1e-3,
             "clamped plate mode ({m},{n}) integrates to {mean}"
+        );
+    }
+}
+
+#[test]
+fn scratch_disp() {
+    for disperse in [0.0f32, 0.25, 0.5, 1.0] {
+        let mut g = guide::Guide::new(SR);
+        g.configure(&guide::Settings {
+            f0: 220.0,
+            opening: 1.0,
+            radius_mm: 20.0,
+            decay: 4.0,
+            tilt_db_oct: 0.0,
+            disperse,
+            hit: 0.107,
+            pos_l: 0.213,
+            pos_r: 0.379,
+        });
+        let r = g.resonances();
+        let f1 = r.first().map(|x| x.hz).unwrap_or(0.0);
+        let show: Vec<String> = [1usize, 3, 7, 15]
+            .iter()
+            .filter_map(|k| r.get(*k))
+            .map(|x| {
+                format!(
+                    "{:.1}",
+                    1200.0
+                        * (x.hz
+                            / (f1 * (r.iter().position(|y| y.hz == x.hz).unwrap() as f32 + 1.0)))
+                            .log2()
+                )
+            })
+            .collect();
+        println!(
+            "disperse {disperse}: f1={f1:.2} n={} stretch(cents at 2,4,8,16)={:?}",
+            r.len(),
+            show
         );
     }
 }
