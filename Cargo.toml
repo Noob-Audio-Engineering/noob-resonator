@@ -13,6 +13,22 @@ homepage = "https://github.com/Noob-Audio-Engineering/noob-resonator"
 # A plug-in, not a library: nothing here goes to crates.io.
 publish = false
 
+
+# How this plug-in presents itself in the plug-in manager. It lives here so
+# each plug-in owns its own description --- the manager has no list of them.
+[package.metadata.noob]
+name = "Noob Resonator"
+accent = "#4fd6c8"
+tagline = "A modal and waveguide resonator whose mode budget is spent by contribution rather than by frequency."
+features = [
+    "Ten objects: beams, bars, strings, tines, membranes, plates and air columns",
+    "Which modes you keep, not how many: 68 dB between the best and worst ordering at one cost",
+    "Six voices per object, so a chord of beams or a chord of pipes",
+    "Play chords into it over MIDI, with six memory slots",
+    "Every partial editable by hand, or drawn across in one stroke",
+    "33 presets in seven pairs, each pair one control apart",
+]
+
 [lib]
 crate-type = ["cdylib", "lib"]
 
