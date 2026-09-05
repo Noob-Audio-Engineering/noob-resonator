@@ -808,8 +808,30 @@ export function lengthText(m) {
  */
 export const modeName = (p) => (p && p.j > 0 ? `(${p.i}, ${p.j})` : null);
 
-/** How to refer to one partial in prose: a mode pair on a surface, a partial number otherwise. */
-export const partialName = (p) => (!p ? '' : p.j > 0 ? `Mode ${modeName(p)}` : `Partial ${p.i}`);
+/**
+ * How to refer to one partial in prose.
+ *
+ * **The label follows what the index *means* on this object, never its
+ * numeric value.** `j` is a lattice coordinate on a surface and a voice on a
+ * line, and reading it as "not zero, so it is a pair" put `Partial 1` and
+ * `Mode (1, 1)` in one list about two things of identical kind — and told a
+ * reader that a beam has a second dimension, which it does not.
+ *
+ * So the caller says which world it is in, and `Mode (i, j)` is reserved for
+ * the surfaces where the pair genuinely is a coordinate.
+ *
+ * **At one voice this is identical to what shipped before voices existed.**
+ * Every row has `j = 0`, `voiced` is false, and the label is `Partial n` — a
+ * user who never turns Voices up cannot tell the feature is there.
+ *
+ * @param {{ i: number, j: number }} p
+ * @param {boolean} [voiced] Whether more than one voice is sounding on a line.
+ */
+export const partialName = (p, voiced = false) => {
+  if (!p) return '';
+  if (voiced) return `Voice ${(p.j || 0) + 1} · partial ${p.i}`;
+  return p.j > 0 ? `Mode ${modeName(p)}` : `Partial ${p.i}`;
+};
 
 /** `4.2 s`, `250 ms` — a ring time in the unit it is comfortable in. */
 export function timeText(s) {

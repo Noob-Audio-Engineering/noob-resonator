@@ -15,13 +15,35 @@
  * test runner.
  */
 
-/** A `layout` string from a stream's meta, as names, a stride and an index. */
+/**
+ * A `layout` string from a stream's meta, as names, a stride and an index.
+ *
+ * **A field may occupy more than one slot**, written `name[n]` — the engine
+ * publishes the per-voice partial counts as `voice_available[6]`, six numbers
+ * under one name. So a name's index is the running offset rather than its
+ * position in the comma list, and the stride is the total number of slots.
+ *
+ * Those two happen to be equal today, because `voice_available` is last and
+ * everything before it is one slot wide. **Counting positions would still be
+ * wrong**, and silently: put a second run-valued field anywhere but the end and
+ * every name after it reads its neighbour's number — a wrong value in the right
+ * place, which is the failure this module exists to make impossible.
+ */
 export function parseLayout(layout) {
-  const names = String(layout || '')
-    .split(',')
-    .map((n) => n.trim())
-    .filter(Boolean);
-  return { names, stride: names.length, index: Object.fromEntries(names.map((n, i) => [n, i])) };
+  const names = [];
+  const index = {};
+  const width = {};
+  let at = 0;
+  for (const raw of String(layout || '').split(',').map((n) => n.trim()).filter(Boolean)) {
+    const m = raw.match(/^(.+?)\[(\d+)\]$/);
+    const name = m ? m[1] : raw;
+    const n = m ? Math.max(1, Number(m[2])) : 1;
+    names.push(name);
+    index[name] = at;
+    width[name] = n;
+    at += n;
+  }
+  return { names, stride: at, index, width };
 }
 
 /**

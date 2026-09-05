@@ -49,8 +49,12 @@ const chords = useChords();
 const voicing = computed(() => {
   if (!chords.has || inactive('voices', object.value, meta.value)) return null;
   const n = chords.sounding;
-  if (!n) return null;
-  return n === 1 ? 'one voice' : `${n} voices · ${chords.label}`;
+  // **Nothing at one voice.** One voice is the object at its own pitch, which
+  // is what it was before voices existed — and a line reading "one voice" is
+  // the panel announcing a feature rather than stating a fact about the sound.
+  // A user who never turns Voices up should not be able to tell it is there.
+  // The way in stays, because a feature nobody can reach is not one.
+  return n > 1 ? `${n} voices · ${chords.label}` : null;
 });
 
 /**

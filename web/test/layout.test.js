@@ -156,3 +156,35 @@ test('and refusing it is not the same as hiding it', () => {
   assert.equal(countAt(frame, layout, 'modes_available'), null, 'refused');
   assert.equal(fieldAt(frame, layout, 'modes_available'), -1, 'but still there to be complained about');
 });
+
+// ---------------------------------------------------------------------------
+
+test('a field may occupy several slots, and the ones after it still land right', () => {
+  // The engine publishes the per-voice partial counts as one name over six
+  // slots. Counting comma positions gives the right answer only while such a
+  // field is last, which it is today — so this pins the general case, where
+  // getting it wrong means every later name reads its neighbour's number.
+  const live = parseLayout('modes_used,modes_available,voice_available[6],f0_hz');
+  assert.equal(live.index.modes_used, 0);
+  assert.equal(live.index.voice_available, 2);
+  assert.equal(live.index.f0_hz, 8, 'the run is six wide, so what follows starts at eight');
+  assert.equal(live.stride, 9, 'and the stride counts slots, not names');
+  assert.equal(live.width.voice_available, 6);
+  assert.equal(live.width.modes_used, 1, 'an ordinary field is one slot wide');
+
+  // Read one voice's count by offsetting from the name.
+  const frame = [12, 90, 40, 30, 20, 10, 5, 1, 220];
+  assert.equal(fieldAt(frame, live, 'voice_available', 0), 40);
+  assert.equal(fieldAt(frame, live, 'voice_available', 5), 1);
+  assert.equal(fieldAt(frame, live, 'f0_hz'), 220, 'and the field after the run is not the run');
+});
+
+test('the layout the engine actually publishes reads as it should', () => {
+  const info = parseLayout(
+    'modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,' +
+      'open_hz,engine,build,f0_hz,ceiling_hz,voice_available[6]',
+  );
+  assert.equal(info.stride, 19, 'thirteen readouts and six counts');
+  assert.equal(info.index.ceiling_hz, 12);
+  assert.equal(info.index.voice_available, 13);
+});

@@ -57,8 +57,10 @@ import {
   ratioText,
   timeText,
   useDesignMode,
+  inactive,
   useFundamental,
   useNyquist,
+  useObjectMeta,
   useInfo,
   useModes,
   useObject,
@@ -75,6 +77,7 @@ const info = useInfo();
 const response = useResponse();
 const overrides = useOverrides();
 const designMode = useDesignMode();
+const meta = useObjectMeta();
 const fundamental = useFundamental();
 
 const box = ref(null);
@@ -136,6 +139,25 @@ const R_MIN = 0.82;
 const DB_FLOOR = -66;
 
 const guide = computed(() => object.value.engine === 'waveguide');
+
+/**
+ * Whether more than one voice is sounding, which changes what the axis and the
+ * labels mean.
+ *
+ * **Derived from the drawn rows rather than from the parameter**, so it can
+ * never disagree with the picture it describes. The `voices` control is what
+ * was asked for and the frame is what is sounding; between the two there is a
+ * moment where they differ, and naming rows from one while drawing them from
+ * the other is the ruler-and-bars fault again.
+ *
+ * The object's own capability comes from `uses`, which is static: a surface's
+ * `j` is a lattice index whatever it contains, so a `j` above zero there is
+ * not a voice. On a line it is, and at one voice every row carries zero — so
+ * this is false and the whole display is identical to what shipped before
+ * voices existed.
+ */
+const offersVoices = computed(() => !inactive('voices', object.value, meta.value));
+const voiced = computed(() => offersVoices.value && modes.list.some((p) => (p.j || 0) > 0));
 const f0 = computed(() => Math.max(1e-6, fundamental.value.hz));
 const nyquist = computed(() => (response.has ? response.range[1] : 24000));
 
@@ -205,7 +227,15 @@ const rTicks = computed(() => {
   const g = geom.value;
   const out = [];
   for (let ratio = 1; ratio <= g.rMax; ratio *= 2) {
-    out.push({ r: ratio, x: g.x(ratio), label: `${ratio}×`, hz: hzText(ratio * f0.value) });
+    // **Frequency, not ratio, once more than one voice sounds.** A ratio is a
+    // number divided by the fundamental, and with a chord there is no single
+    // fundamental to divide by — voice two's root would read 1.498×, which is a
+    // true number over the wrong denominator. So the octave lines keep their
+    // positions and stop claiming to be ratios.
+    const hz = hzText(ratio * f0.value);
+    out.push(voiced.value
+      ? { r: ratio, x: g.x(ratio), label: hz, hz: '' }
+      : { r: ratio, x: g.x(ratio), label: `${ratio}×`, hz });
   }
   return out;
 });
@@ -713,7 +743,7 @@ const missing = computed(() => {
 const settling = computed(() => info.build != null && info.build < 0.999);
 
 const tip = (p) =>
-  `${partialName(p)} · ${ratioText(p.ratio)}× · ${hzText(p.hz)}` +
+  `${partialName(p, voiced.value)} · ${voiced.value ? '' : `${ratioText(p.ratio)}× · `}${hzText(p.hz)}` +
   (p.ring != null ? ` · rings ${timeText(p.ring)}` : '') +
   (p.dead ? ' · a node took it' : '') +
   (p.edited ? ' · edited' : '') +
