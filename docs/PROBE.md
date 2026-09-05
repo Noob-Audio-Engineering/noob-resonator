@@ -87,8 +87,18 @@ bound — 30 for the round membrane, 200 for the clamped plate — and are compl
 up to it, which is a claim the probe can make about a set rather than about a
 count.
 
-The one series it cannot check is the **marimba's**, and that is stated rather
-than glossed: an arch-cut bar's tuned overtones are a maker's targets from the
+**Two series it cannot check, both stated rather than glossed.**
+
+The **chord's**, because equal temperament is a *definition* and not the
+solution of an equation — a second implementation of `2^(n/12)` would agree
+with the first by construction and prove nothing. What is checkable there is
+how far tempered intervals sit from the small whole-number ratios they
+approximate, and those deviations come from a different calculation entirely:
+`src/dsp/tests.rs` holds the fifth 1.955 cents narrow of 3:2, the major third
+13.686 cents sharp of 5:4 and the major sixth 15.641 sharp of 5:3, all
+published figures.
+
+And the **marimba's**, which is stated the same way: an arch-cut bar's tuned overtones are a maker's targets from the
 percussion-acoustics literature and not the solution of a bare equation, so
 there is nothing for a second implementation to solve. `src/dsp/tests.rs`
 asserts the published targets themselves instead, and the two sources that

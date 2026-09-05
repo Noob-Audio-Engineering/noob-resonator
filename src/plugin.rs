@@ -47,7 +47,7 @@ use noob_vst_webgui_framework_nih::{
     ui_store_fields,
 };
 
-use crate::dsp::{self, ModeTable, Point, Processor, Settings, bank};
+use crate::dsp::{self, CHORD_VOICES, ModeTable, Point, Processor, Settings, bank};
 
 /// Longest mono block the scratch buffer covers. Hosts that hand out more
 /// than this in one call are vanishingly rare, and the device chunks
@@ -167,6 +167,10 @@ pub struct NoobResonatorParams {
     pub ratio: FloatParam,
     pub bar_tuning: EnumParam<BarTuningParam>,
     pub bar_third: EnumParam<BarThirdParam>,
+    /// How many of the chord's voices sound, and each voice's pitch in
+    /// semitones from the root. Six pitches and no chord: see `dsp::mod`.
+    pub voices: IntParam,
+    pub voice: [IntParam; CHORD_VOICES],
     pub radius: FloatParam,
     pub opening: FloatParam,
     /// T60 at the fundamental, in **seconds**.
@@ -251,6 +255,22 @@ impl Default for NoobResonatorParams {
                 .with_value_to_string(formatters::v2s_f32_rounded(2)),
             bar_tuning: EnumParam::new("Bar Tuning", BarTuningParam::Marimba),
             bar_third: EnumParam::new("Third Partial", BarThirdParam::Woodhouse),
+            voices: IntParam::new(
+                "Voices",
+                d.voices as i32,
+                IntRange::Linear {
+                    min: 1,
+                    max: CHORD_VOICES as i32,
+                },
+            ),
+            voice: std::array::from_fn(|k| {
+                IntParam::new(
+                    format!("Voice {}", k + 1),
+                    d.voice_semis[k] as i32,
+                    IntRange::Linear { min: -24, max: 36 },
+                )
+                .with_unit(" st")
+            }),
             radius: FloatParam::new("Radius", d.radius_mm, log_range(1.0, 100.0))
                 .with_unit(" mm")
                 .with_value_to_string(formatters::v2s_f32_rounded(1)),
@@ -394,6 +414,13 @@ unsafe impl Params for NoobResonatorParams {
             (g("ratio"), self.ratio.as_ptr(), g("body")),
             (g("bar_tuning"), self.bar_tuning.as_ptr(), g("body")),
             (g("bar_third"), self.bar_third.as_ptr(), g("body")),
+            (g("voices"), self.voices.as_ptr(), g("chord")),
+            (g("voice1"), self.voice[0].as_ptr(), g("chord")),
+            (g("voice2"), self.voice[1].as_ptr(), g("chord")),
+            (g("voice3"), self.voice[2].as_ptr(), g("chord")),
+            (g("voice4"), self.voice[3].as_ptr(), g("chord")),
+            (g("voice5"), self.voice[4].as_ptr(), g("chord")),
+            (g("voice6"), self.voice[5].as_ptr(), g("chord")),
             (g("radius"), self.radius.as_ptr(), g("body")),
             (g("opening"), self.opening.as_ptr(), g("body")),
             (g("decay"), self.decay.as_ptr(), g("damping")),
@@ -455,6 +482,8 @@ impl NoobResonatorParams {
             aspect: self.ratio.value(),
             bar_tuning: self.bar_tuning.value() as usize,
             bar_third: self.bar_third.value() as usize,
+            voices: self.voices.value() as usize,
+            voice_semis: std::array::from_fn(|k| self.voice[k].value() as f32),
             radius_mm: self.radius.value(),
             opening: self.opening.value() / 100.0,
             decay_s: self.decay.value(),

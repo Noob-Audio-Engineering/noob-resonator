@@ -26,6 +26,7 @@ import Deck from './Deck.vue';
 import DevPanel from './DevPanel.vue';
 import TypeBrowser from './TypeBrowser.vue';
 import PresetBrowser from './PresetBrowser.vue';
+import ChordBrowser from './ChordBrowser.vue';
 import { WINDOW_MIN, ui, useDebug, useWindow } from '../composables/useResonator.js';
 
 const debug = useDebug();
@@ -50,6 +51,7 @@ useWindow();
     -->
     <TypeBrowser v-if="ui.browsing" />
     <PresetBrowser v-else-if="ui.presets" />
+    <ChordBrowser v-else-if="ui.chords" />
     <ResizeGrip class="res__grip" :min="WINDOW_MIN" />
   </div>
 </template>

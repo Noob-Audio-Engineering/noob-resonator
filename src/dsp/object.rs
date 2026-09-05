@@ -64,6 +64,120 @@ pub const OBJECT_NAMES: [&str; 10] = [
     "Plate Round",
 ];
 
+/// The most pitches one object can be tuned to at once.
+///
+/// Six, and the number is not arbitrary: it is what a hand can hold on a
+/// keyboard and what a chord needs to be a chord rather than an interval.
+pub const CHORD_VOICES: usize = 6;
+
+/// One way of filling an object's voices: a name and the semitones.
+///
+/// **These are a convenience over the six pitch parameters, not a state the
+/// engine holds.** A page applies one by writing the pitches through the
+/// ordinary parameter path, exactly as it applies a preset, so the chord can
+/// always be edited afterwards and there is no second place a voice's pitch
+/// is decided. That is the dossier's sharpest structural observation taken
+/// seriously: a chord menu that replaces per-voice tuning is strictly less
+/// than one that fills it.
+pub struct Chord {
+    pub name: &'static str,
+    pub group: &'static str,
+    /// Semitones from the root, lowest voice first. At most [`CHORD_VOICES`].
+    pub semis: &'static [f32],
+}
+
+/// The chords the manifest publishes.
+///
+/// **Voiced for a resonator rather than for a keyboard.** A closed triad puts
+/// three fundamentals inside four semitones, where the combs beat against
+/// each other and the result is one thick note rather than a chord; spread
+/// across two octaves each voice keeps its own register and stays audible as
+/// a voice. The stacks at the end are not triads at all — fifths, octaves and
+/// fourths are what a resonator is most useful tuned to, because they colour
+/// a source without asserting a key.
+pub const CHORDS: [Chord; 16] = [
+    Chord {
+        name: "Major",
+        group: "Triads",
+        semis: &[0.0, 7.0, 16.0],
+    },
+    Chord {
+        name: "Minor",
+        group: "Triads",
+        semis: &[0.0, 7.0, 15.0],
+    },
+    Chord {
+        name: "Diminished",
+        group: "Triads",
+        semis: &[0.0, 6.0, 15.0],
+    },
+    Chord {
+        name: "Augmented",
+        group: "Triads",
+        semis: &[0.0, 8.0, 16.0],
+    },
+    Chord {
+        name: "Sus 2",
+        group: "Triads",
+        semis: &[0.0, 7.0, 14.0],
+    },
+    Chord {
+        name: "Sus 4",
+        group: "Triads",
+        semis: &[0.0, 7.0, 17.0],
+    },
+    Chord {
+        name: "Major 7",
+        group: "Sevenths",
+        semis: &[0.0, 7.0, 16.0, 23.0],
+    },
+    Chord {
+        name: "Minor 7",
+        group: "Sevenths",
+        semis: &[0.0, 7.0, 15.0, 22.0],
+    },
+    Chord {
+        name: "Dominant 7",
+        group: "Sevenths",
+        semis: &[0.0, 7.0, 16.0, 22.0],
+    },
+    Chord {
+        name: "Half Diminished",
+        group: "Sevenths",
+        semis: &[0.0, 6.0, 15.0, 22.0],
+    },
+    Chord {
+        name: "Major 9",
+        group: "Extended",
+        semis: &[0.0, 7.0, 16.0, 23.0, 26.0],
+    },
+    Chord {
+        name: "Minor 9",
+        group: "Extended",
+        semis: &[0.0, 7.0, 15.0, 22.0, 26.0],
+    },
+    Chord {
+        name: "Fifths",
+        group: "Stacks",
+        semis: &[0.0, 7.0, 12.0, 19.0, 24.0, 31.0],
+    },
+    Chord {
+        name: "Octaves",
+        group: "Stacks",
+        semis: &[0.0, 12.0, 24.0],
+    },
+    Chord {
+        name: "Fourths",
+        group: "Stacks",
+        semis: &[0.0, 5.0, 10.0, 15.0, 20.0, 25.0],
+    },
+    Chord {
+        name: "Unison",
+        group: "Stacks",
+        semis: &[0.0],
+    },
+];
+
 /// Which of the two engines an object needs.
 ///
 /// A solid vibrates and its motion decomposes into normal modes, so it is a
@@ -123,13 +237,34 @@ impl Object {
         }
     }
 
-    /// Whether the object is a surface, so the second contact coordinate
-    /// means something and the partials form a two-dimensional lattice.
+    /// Whether the object is a **surface**, so the second contact coordinate
+    /// means something.
+    ///
+    /// This is about the *contacts*, and [`has_two_indices`](Self::has_two_indices)
+    /// is about the *partials*. They agree on every physical object and
+    /// disagree on the chord, whose partials are numbered `(voice, harmonic)`
+    /// while each voice is a line with one coordinate along it. Asking one
+    /// question and answering the other is the fault this project has spent a
+    /// day finding in other places, so the two are separate here.
     pub fn is_2d(self) -> bool {
         matches!(
             self,
             Object::Membrane | Object::Plate | Object::MembraneRound | Object::PlateRound
         )
+    }
+
+    /// Whether the object can be tuned to several pitches at once.
+    ///
+    /// **The one-dimensional ones can and the surfaces cannot**, and the
+    /// reason is an encoding rather than a physical one: a mode is named by
+    /// `(i, j)`, a line leaves `j` at zero, and that free field is where a
+    /// voice goes. A surface is already using it for the second lattice
+    /// index, so voicing one needs a third field, every override re-keyed and
+    /// every saved preset migrated. That is a decision to take on evidence
+    /// later, not a limit of the physics — `object_meta` says so in those
+    /// words rather than greying the control with no reason.
+    pub fn can_voice(self) -> bool {
+        !self.is_2d()
     }
 
     /// Whether `ratio` — the rectangle's aspect — applies.
@@ -864,6 +999,15 @@ pub struct Partial {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
     pub object: Object,
+    /// How many of [`CHORD_VOICES`] are sounding; ignored off the chord.
+    pub voices: u8,
+    /// Each voice's pitch, in semitones from the root. Ignored off the chord.
+    ///
+    /// **In the order the user put them, never sorted.** An override is keyed
+    /// to `(voice, harmonic)`, so sorting to make the series ascend would
+    /// renumber the voices an edit belongs to — the same fault as keying an
+    /// override by its row in the display.
+    pub voice_semis: [f32; CHORD_VOICES],
     /// `Lx / Ly` for the rectangular surfaces; ignored otherwise.
     pub aspect: f32,
     /// Stiff-string inharmonicity `B`, signed: positive stretches the
@@ -878,6 +1022,13 @@ impl Default for Shape {
     fn default() -> Self {
         Shape {
             object: Object::String,
+            // **One**, so the default instrument is exactly the object and
+            // nothing else. Voices are opt-in: the tuning below is what they
+            // are set to when a user asks for more, spread rather than closed
+            // because a closed triad puts three fundamentals inside four
+            // semitones where they beat into one thick note.
+            voices: 1,
+            voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
             aspect: 1.0,
             inharm_b: 0.0,
             bar_tuning: 0,
@@ -887,9 +1038,66 @@ impl Default for Shape {
 }
 
 impl Shape {
+    /// How many voices actually sound: one unless the object can be voiced.
+    pub fn voice_count(&self) -> u16 {
+        if self.object.can_voice() {
+            (self.voices as u16).clamp(1, CHORD_VOICES as u16)
+        } else {
+            1
+        }
+    }
+
+    /// Whether a partial needs its second index at all.
+    ///
+    /// A surface always does, for the lattice. A line does only once it is
+    /// tuned to more than one pitch, and then `j` is the **voice** — so a
+    /// single-voiced line publishes `j = 0` exactly as it always has, and
+    /// nothing saved against the old encoding moves.
+    pub fn uses_j(&self) -> bool {
+        self.object.is_2d() || self.voice_count() > 1
+    }
+
+    /// The pitch of voice `j` as a ratio to the root.
+    ///
+    /// Voices are numbered from zero, which is what makes a one-voice object
+    /// bit-identical to an unvoiced one: voice 0 at zero semitones is a ratio
+    /// of exactly 1.
+    pub fn voice_ratio(&self, j: u16) -> f64 {
+        if !self.object.can_voice() || j as usize >= CHORD_VOICES {
+            return 1.0;
+        }
+        if self.voice_count() == 1 && j == 0 {
+            // A single voice is the object at its own pitch, whatever voice 1
+            // happens to be tuned to: turning the count down must not
+            // transpose what is left.
+            return 1.0;
+        }
+        (self.voice_semis[j as usize] as f64 / 12.0).exp2()
+    }
+
     /// The ratio of partial `(i, j)` to the fundamental, before
     /// inharmonicity.
     pub fn base_ratio(&self, i: u16, j: u16) -> f64 {
+        // **A line's `j` is a voice, and a voice is a transposition.** The
+        // object keeps its own series — a beam's `β²`, a tine's, a string's
+        // `n` — and each voice is that whole series moved to another pitch.
+        // That is the feature: six roots times a real modal series, rather
+        // than a chord that replaces the body with tuned strings.
+        if self.object.can_voice() {
+            if j >= self.voice_count() {
+                return 0.0;
+            }
+            return self.unvoiced_ratio(i, 0) * self.voice_ratio(j);
+        }
+        self.unvoiced_ratio(i, j)
+    }
+
+    /// The object's own series with no voice applied.
+    ///
+    /// Split from [`base_ratio`](Self::base_ratio) rather than copied, so the
+    /// voiced path multiplies exactly the series the unvoiced path returns
+    /// and a beam's eigenvalue ratio exists once.
+    fn unvoiced_ratio(&self, i: u16, j: u16) -> f64 {
         let a = self.aspect.clamp(0.05, 20.0) as f64;
         match self.object {
             Object::Beam => {
@@ -989,6 +1197,26 @@ impl Shape {
     /// Inharmonicity is monotonic in the ratio, so the ceiling can simply be
     /// pulled back through it rather than applied per partial.
     pub fn available(&self, max_ratio: f64) -> usize {
+        // Each voice is the whole object at another pitch, so it reaches
+        // however far the ceiling is *for that voice*: a voice tuned an
+        // octave up has half the room. Summed rather than multiplied.
+        if self.object.can_voice() && self.voice_count() > 1 {
+            let mut total = 0usize;
+            for j in 0..self.voice_count() {
+                total =
+                    total.saturating_add(self.unvoiced_available(max_ratio / self.voice_ratio(j)));
+                if total >= MAX_CANDIDATES {
+                    return MAX_CANDIDATES;
+                }
+            }
+            return total;
+        }
+        self.unvoiced_available(max_ratio)
+    }
+
+    /// How many partials the object's own series has below a ratio, with no
+    /// voice applied.
+    fn unvoiced_available(&self, max_ratio: f64) -> usize {
         if max_ratio < 1.0 {
             return 0;
         }
@@ -1002,7 +1230,11 @@ impl Shape {
         match self.object {
             Object::Beam | Object::Marimba | Object::Tine => {
                 let mut n = 0usize;
-                while n < BEAM_MODES && self.base_ratio(n as u16 + 1, 0) <= cap {
+                // `unvoiced_ratio`, not `base_ratio`: this function is
+                // already being called once per voice with the ceiling
+                // divided by that voice's ratio, and going back through the
+                // voiced path would apply the transposition twice.
+                while n < BEAM_MODES && self.unvoiced_ratio(n as u16 + 1, 0) <= cap {
                     n += 1;
                 }
                 n
@@ -1130,6 +1362,12 @@ impl Walk {
             shape,
             max_ratio,
             i: if polar { 0 } else { 1 },
+            // Two indices, not two coordinates: the chord's partials are
+            // `(voice, harmonic)` and need the `j` sweep, while its contacts
+            // are a position along one string and need only `x`.
+            // A lattice's second index starts at one; a **voice** starts at
+            // zero, which is what makes a single-voiced line publish exactly
+            // the `j = 0` it always has.
             j: if shape.object.is_2d() { 1 } else { 0 },
             done: max_ratio < 1.0,
             yielded: 0,
@@ -1145,7 +1383,10 @@ impl Iterator for Walk {
             return None;
         }
         let object = self.shape.object;
-        if !object.is_2d() {
+        // A voiced line uses `j` for the voice, so it takes the two-index
+        // path even though it is not a surface.
+        let voiced = self.shape.voice_count() > 1;
+        if !self.shape.uses_j() {
             let i = self.i;
             let limit = match object {
                 Object::Beam | Object::Marimba | Object::Tine => BEAM_MODES as u16,
@@ -1177,6 +1418,13 @@ impl Iterator for Walk {
             CIRCLE_ORDERS as u16
         } else if disc {
             DISC_ORDERS as u16
+        } else if voiced {
+            // A voiced line's first index is still its own mode number, so
+            // it runs out where the unvoiced object does.
+            match object {
+                Object::Beam | Object::Marimba | Object::Tine => BEAM_MODES as u16 + 1,
+                _ => WALK_INDEX_MAX,
+            }
         } else {
             WALK_INDEX_MAX
         };
@@ -1184,6 +1432,10 @@ impl Iterator for Walk {
             CIRCLE_ZEROS as u16
         } else if disc {
             DISC_ROOTS as u16
+        } else if voiced {
+            // `j` is the voice here, numbered from zero, and there are only
+            // ever a handful.
+            self.shape.voice_count() - 1
         } else {
             WALK_INDEX_MAX
         };
@@ -1198,13 +1450,27 @@ impl Iterator for Walk {
             } else {
                 self.shape.ratio(i, j)
             };
+            // A voiced line's columns are modes and its rows are voices, and
+            // a voice past the ceiling says nothing about the next voice —
+            // one of them may be tuned two octaves down. So the column ends
+            // only when it is exhausted, and the walk ends only when the
+            // **lowest** voice has run out.
+            if voiced && r > self.max_ratio && j <= j_limit {
+                self.j += 1;
+                continue;
+            }
             if r > self.max_ratio || r == 0.0 {
                 // Past the ceiling up this column, so start the next one. A
-                // column that is already past it at `j = 1` ends the walk,
-                // because every series here rises with `i` as well.
-                let empty = j <= 1;
+                // column already past it at `j = 1` ends the walk on every
+                // physical object, because their series rise with `i` too.
+                //
+                // **A chord's do not.** Its voices are in the order the user
+                // put them, so voice 4 may be the lowest and an empty voice 2
+                // says nothing about voice 3. It is scanned to the end of its
+                // six instead, which is the whole object and costs nothing.
+                let empty = j <= if voiced { 0 } else { 1 };
                 self.i += 1;
-                self.j = 1;
+                self.j = if voiced { 0 } else { 1 };
                 if empty {
                     self.done = true;
                     return None;

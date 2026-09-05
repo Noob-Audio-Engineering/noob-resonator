@@ -15,7 +15,8 @@
  * at by cutting until the partials land, and no bare equation gives them.
  */
 import { computed } from 'vue';
-import { forcesOf, noteOf, ui, useMetaDrift, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
+import { forcesOf, inactive, noteOf, ui, useMetaDrift, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
+import { useChords } from '../composables/useChords.js';
 
 const r = useRes();
 const object = useObject();
@@ -31,6 +32,26 @@ const meta = useObjectMeta();
  * everywhere it was tested.
  */
 const drift = useMetaDrift();
+const chords = useChords();
+
+/**
+ * How the object is tuned, said beside what it is made of.
+ *
+ * **Both are true and neither replaces the other.** An object answers *what is
+ * it made of*; the voices answer *what is it tuned to*. A chord of beams is
+ * still a beam — every voice gets this object's own series — so the bar states
+ * the two facts side by side rather than letting one stand in for the other.
+ *
+ * `null` on an object that has no voices, which is the engine's call and not
+ * this file's: the two-dimensional objects do not offer them yet, and `uses`
+ * is what says so.
+ */
+const voicing = computed(() => {
+  if (!chords.has || inactive('voices', object.value, meta.value)) return null;
+  const n = chords.sounding;
+  if (!n) return null;
+  return n === 1 ? 'one voice' : `${n} voices · ${chords.label}`;
+});
 
 /**
  * What the cited equation does not currently describe.
@@ -83,9 +104,16 @@ const caveat = computed(() => {
         <span class="pick__name">{{ object.label }}</span>
         <span class="pick__short">{{ object.short }}</span>
         <span v-if="farEnd" class="pick__state">{{ farEnd }}</span>
+        <!--
+          What it is made of, and what it is tuned to. Two facts, not one
+          replacing the other: every voice gets this object's own series, so a
+          chord of beams is still beams.
+        -->
+        <span v-if="voicing" class="pick__voicing">{{ voicing }}</span>
       </div>
 
       <button class="key pick__change" type="button" @click="ui.browsing = true">Change resonator</button>
+      <button v-if="voicing" class="key pick__tune" type="button" @click="ui.chords = true">Tune the voices</button>
 
       <div class="pick__say">
         <p class="pick__blurb">{{ object.blurb }}</p>

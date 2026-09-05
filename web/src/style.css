@@ -173,6 +173,12 @@ body {
 .pick__caveat { color: var(--res-warn); opacity: 0.72; }
 /* The engine's own word about this object, where it has one. */
 .pick__note { color: var(--res-dim); font-style: italic; }
+/*
+ * How the object is tuned, beside what it is made of. In the brass the panel
+ * uses for a live setting rather than the warning colour: a chord is a state,
+ * not a caution.
+ */
+.pick__voicing { font-size: 11px; color: var(--res-brass); letter-spacing: 0.02em; }
 
 /* --------------------------------------------------------------------------
  * Select: which partials survive

@@ -506,6 +506,13 @@ def air_column(count, stopped):
 # grows with frequency, so their agreement with an ideal column is a
 # band-limited claim: the same sixteen partials and the same one cent the
 # benchmark publishes, with the drift above that printed rather than asserted.
+# Objects this file deliberately has no opinion about, and why. An entry here
+# is a statement; an object in neither this nor SERIES is an oversight.
+NO_SERIES = {
+    "Marimba": "an arch-cut bar's overtones are a maker's targets, not a solved equation",
+    "Chord": "equal temperament is a definition, so there is nothing to solve twice",
+}
+
 SERIES = {
     "Beam": (lambda n: {(i, 0): r for i, r in enumerate(beam_ratios(n), start=1)}, 0.001, None, None),
     "Tine": (lambda n: {(i, 0): r for i, r in enumerate(tine_ratios(n), start=1)}, 0.001, None, None),
@@ -553,7 +560,15 @@ def compare(path):
     for obj, got in sorted(rows.items(), key=lambda kv: int(ids[kv[0]])):
         entry = SERIES.get(obj)
         if entry is None:
-            print(f"  {obj}: no independent series here, skipped")
+            # Skipped, and the reason is stated rather than left as a gap.
+            # Neither of these has an equation for a second implementation to
+            # solve: a marimba's tuned overtones are a maker's targets from
+            # the percussion literature, and equal temperament is a
+            # definition. Both are checked in `src/dsp/tests.rs` instead,
+            # against the published targets and against the deviations of
+            # tempered intervals from just intonation.
+            why = NO_SERIES.get(obj, "no independent series here")
+            print(f"  {obj}: {why}, skipped")
             continue
         build, tol, head, rmax = entry
         want = build(len(got) + 2)

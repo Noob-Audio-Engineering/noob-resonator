@@ -78,7 +78,7 @@
 //! |---|---|---|---|---|
 //! | `meter` | meter | 4 | every block | `[in_l, in_r, out_l, out_r]`, linear peaks, 1.0 = 0 dBFS |
 //! | `modes` | raw, sticky | 512 | on change | 64 partials × `[i, j, hz, db_l, db_r, t60_s, db_bare, base_hz]`, ascending in `hz`, terminated by `hz = 0`. For a mode bank these are the **loudest** 64 and `(i, j)` are the mode's own indices; for an air column they are the loop's lowest 64 resonances and `i` is the resonance number. `db_bare` is the level the partial would have had with unit mode shapes at both contacts, so the gap between it and `db_l` is the energy a node **removed**; `base_hz` is where the partial sat before Inharm stretched the series. **A partial with an override is always published**, however quiet the override made it |
-//! | `info` | raw | 13 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the fundamental **the published `modes` table was built at**, which is the number every ratio on the display is divided by — deliberately the table’s own moment rather than the current one, because `modes` is sticky and `info` is not, so a page pairing the newest `info` with the last table it received would divide one moment’s frequencies by another’s and draw a ratio-1 partial at 1.2. It follows transpose, fine and the oscillator like the table does, and lags the Tune control while a gesture is in flight — comparing the two is how a page can say it is catching up; `ceiling_hz` is where the bank runs out. `modes_available` is capped at `object::MAX_CANDIDATES`, because an object's mode set is not always finite — a negative `inharm` compresses the whole series under a fixed ratio, and a low enough fundamental puts hundreds of millions of a membrane's partials in the band — so at that value it is a floor on what the object has rather than a total, and `ceiling_hz` is then a real number saying the bank does not reach the top. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
+//! | `info` | raw | 13 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the fundamental **the published `modes` table was built at**, which is the number every ratio on the display is divided by — deliberately the table’s own moment rather than the current one, because `modes` is sticky and `info` is not, so a page pairing the newest `info` with the last table it received would divide one moment’s frequencies by another’s and draw a ratio-1 partial at 1.2. It follows transpose, fine and the oscillator like the table does, and lags the Tune control while a gesture is in flight — comparing the two is how a page can say it is catching up; `ceiling_hz` is where the bank runs out. The last six are **`voice_available`, one per voice**: how many partials that voice has under the ceiling, NaN for a voice that is not sounding. They are here rather than in a stream of their own because a page reads them in the same breath as the rest, and a second stream would be a second arrival time to reconcile. Publishing only what is *drawn* would leave a voice reduced to a single bar reading as a voice with one partial, which at an ordinary six-voice spread happens to four of six. `modes_available` is capped at `object::MAX_CANDIDATES`, because an object's mode set is not always finite — a negative `inharm` compresses the whole series under a fixed ratio, and a low enough fundamental puts hundreds of millions of a membrane's partials in the band — so at that value it is a floor on what the object has rather than a total, and `ceiling_hz` is then a real number saying the bank does not reach the top. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
 //! | `response` | curve, sticky | 512 | on change | the engine's own magnitude in dB, 20 Hz … Nyquist log-spaced, normalised to its own peak |
 //!
 //! ## The ruler is in a different stream from the bars
@@ -190,7 +190,7 @@ pub use engine::{
     Settings,
 };
 pub use lfo::LFO_NAMES;
-pub use object::{BAR_THIRD_NAMES, BAR_TUNING_NAMES, OBJECT_NAMES, Object, Point};
+pub use object::{BAR_THIRD_NAMES, BAR_TUNING_NAMES, CHORD_VOICES, OBJECT_NAMES, Object, Point};
 pub use select::SELECT_NAMES;
 pub use source::{SOURCE_NAMES, Source};
 
@@ -240,7 +240,7 @@ pub fn streams(sr: f32) -> Vec<StreamSpec> {
             .name("Readouts")
             .kind(StreamKind::Raw)
             .meta(json!({
-                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz"
+                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz,voice_available[6]"
             })),
         StreamSpec::new("response", RESPONSE_POINTS)
             .name("Response")
@@ -327,10 +327,68 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
             .labels(BAR_TUNING_NAMES)
             .default(d.bar_tuning as f32)
             .group("body"),
+        // -- the chord ------------------------------------------------------
+        //
+        // **The pitches are parameters and the chord is not.** A chord menu
+        // that lived in the engine would be a second place a voice's pitch is
+        // decided, and the moment a user moved one voice the two would
+        // disagree about what the chord is. So the engine holds six pitches
+        // and nothing else; the manifest publishes the interval sets, and a
+        // page applying one writes these six through the ordinary edit path,
+        // exactly as it applies a preset. Generate, then edit — and there is
+        // no state in which it could generate *instead*.
+        ParamSpec::new("voices", "Voices")
+            .range(1.0, CHORD_VOICES as f32)
+            .steps(CHORD_VOICES as u32)
+            .integer()
+            .default(d.voices as f32)
+            .group("chord"),
         ParamSpec::new("bar_third", "Third Partial")
             .labels(BAR_THIRD_NAMES)
             .default(d.bar_third as f32)
             .group("body"),
+        ParamSpec::new("voice1", "Voice 1")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[0])
+            .group("chord"),
+        ParamSpec::new("voice2", "Voice 2")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[1])
+            .group("chord"),
+        ParamSpec::new("voice3", "Voice 3")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[2])
+            .group("chord"),
+        ParamSpec::new("voice4", "Voice 4")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[3])
+            .group("chord"),
+        ParamSpec::new("voice5", "Voice 5")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[4])
+            .group("chord"),
+        ParamSpec::new("voice6", "Voice 6")
+            .range(-24.0, 36.0)
+            .steps(61)
+            .integer()
+            .unit("st")
+            .default(d.voice_semis[5])
+            .group("chord"),
         ParamSpec::new("radius", "Radius")
             .range(1.0, 100.0)
             .log()
@@ -521,6 +579,15 @@ pub fn object_meta() -> Value {
     for (i, object) in Object::ALL.iter().enumerate() {
         let mut uses: Vec<&str> = common.to_vec();
         let guide = object.engine() == object::Engine::Guide;
+        // **Voices are orthogonal to the object**, so they are added here
+        // rather than inside either engine's branch: a chord is a set of
+        // roots and each root gets this object's own series.
+        if object.can_voice() {
+            uses.push("voices");
+            for id in VOICE_IDS {
+                uses.push(id);
+            }
+        }
         if guide {
             // An air column has no surface to strike, no material and no mode
             // list to truncate; what it has instead is a bore and a far end.
@@ -561,6 +628,11 @@ pub fn object_meta() -> Value {
             Value::Null
         };
         let note = match object {
+            Object::Membrane | Object::Plate | Object::MembraneRound | Object::PlateRound => {
+                "no voices yet: a surface already uses `j` for its second lattice index, so \
+                 tuning one to several pitches needs a third mode index, which is a migration \
+                 rather than a limit of the physics"
+            }
             Object::Tube => {
                 "a Pipe with its far end fully open: the same loop, one reflection at its extreme"
             }
@@ -593,6 +665,35 @@ pub fn object_meta() -> Value {
     Value::Array(out)
 }
 
+/// The chord dictionary, as the bridge publishes it.
+///
+/// A page applies one by writing `voices` and the pitches through the normal
+/// parameter path, the way it applies a preset, so the host records real
+/// gestures and the table stays editable afterwards. **Nothing here is engine
+/// state**; the engine knows six pitches and has never heard of a chord.
+pub fn chords_json() -> Value {
+    Value::Array(
+        object::CHORDS
+            .iter()
+            .map(|c| {
+                json!({
+                    "name": c.name,
+                    "group": c.group,
+                    "semis": c.semis,
+                    "voices": c.semis.len(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The six voice-pitch parameter ids, in voice order.
+///
+/// One list, read by the specs, the index resolver and the object meta, so a
+/// seventh voice cannot arrive in one of them and not the others.
+pub const VOICE_IDS: [&str; CHORD_VOICES] =
+    ["voice1", "voice2", "voice3", "voice4", "voice5", "voice6"];
+
 /// Parameter indices, resolved once so the audio thread never looks an id up
 /// by string.
 #[derive(Clone, Copy, Debug)]
@@ -606,6 +707,9 @@ pub struct ParamIx {
     pub ratio: usize,
     pub bar_tuning: usize,
     pub bar_third: usize,
+    pub voices: usize,
+    /// One per voice, so the audio thread never looks a pitch up by string.
+    pub voice: [usize; CHORD_VOICES],
     pub radius: usize,
     pub opening: usize,
     pub decay: usize,
@@ -657,6 +761,8 @@ pub fn param_index(s: &NoobVstWebguiFramework) -> ParamIx {
         ratio: ix("ratio"),
         bar_tuning: ix("bar_tuning"),
         bar_third: ix("bar_third"),
+        voices: ix("voices"),
+        voice: std::array::from_fn(|k| ix(VOICE_IDS[k])),
         radius: ix("radius"),
         opening: ix("opening"),
         decay: ix("decay"),
@@ -711,6 +817,14 @@ pub fn read_settings(audio: &AudioHandle, ix: &ParamIx) -> Settings {
         aspect: p(ix.ratio),
         bar_tuning: p(ix.bar_tuning).round().clamp(0.0, 1.0) as usize,
         bar_third: p(ix.bar_third).round().clamp(0.0, 1.0) as usize,
+        voices: p(ix.voices).round().clamp(1.0, CHORD_VOICES as f32) as usize,
+        voice_semis: {
+            let mut v = [0.0f32; CHORD_VOICES];
+            for (k, out) in v.iter_mut().enumerate() {
+                *out = p(ix.voice[k]).round().clamp(-24.0, 36.0);
+            }
+            v
+        },
         radius_mm: p(ix.radius),
         opening: p(ix.opening) / 100.0,
         decay_s: p(ix.decay),
@@ -918,6 +1032,9 @@ pub fn bridge_meta(sr: f32, standalone: bool) -> Value {
         "standalone": standalone,
         "max_partials": MAX_EDITS,
         "max_modes": bank::MAX_MODES,
+        "chord_voices": CHORD_VOICES,
+        "voice_ids": VOICE_IDS,
+        "chords": chords_json(),
         "response_points": RESPONSE_POINTS,
         "spread_max_cents": SPREAD_MAX_CENTS,
         "c_air": guide::C_AIR,

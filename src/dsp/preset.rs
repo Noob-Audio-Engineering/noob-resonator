@@ -149,6 +149,10 @@ pub fn settings_values(s: &Settings) -> Map<String, Value> {
     put("ratio", s.aspect);
     put("bar_tuning", s.bar_tuning as f32);
     put("bar_third", s.bar_third as f32);
+    put("voices", s.voices as f32);
+    for (k, semis) in s.voice_semis.iter().enumerate() {
+        put(&format!("voice{}", k + 1), *semis);
+    }
     put("radius", s.radius_mm);
     put("opening", s.opening * 100.0);
     put("decay", s.decay_s);
@@ -704,6 +708,102 @@ pub fn factory() -> Vec<Preset> {
                 pos_l: crate::dsp::Point::new(0.45, 0.1),
                 pos_r: crate::dsp::Point::new(0.7, 0.55),
                 ..on(Object::PlateRound)
+            },
+            modes: vec![],
+        },
+        // -- Voiced -----------------------------------------------------------
+        //
+        // **A chord is not an object here; it is a set of roots, and each
+        // root gets the object's own series.** That is the thing worth having
+        // and the reason a tenth object would have been the weaker feature: a
+        // chord of tuned strings is six harmonic ladders, where a chord of
+        // beams is six copies of a real bar's inharmonic series, which is not
+        // a sound anything else makes.
+        Preset {
+            name: "Struck Triad",
+            group: g(Object::String),
+            description: "Three strings a fifth and a major tenth apart, spread rather than closed so each voice keeps its own register instead of beating against the others.",
+            settings: Settings {
+                tune_hz: 110.0,
+                decay_s: 4.0,
+                voices: 3,
+                voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
+                material: -0.5,
+                bright_db_oct: -3.0,
+                hit: crate::dsp::Point::new(0.14, 0.0),
+                pos_l: crate::dsp::Point::new(0.24, 0.0),
+                pos_r: crate::dsp::Point::new(0.68, 0.0),
+                ..on(Object::String)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Struck Six",
+            group: g(Object::String),
+            description: "The same six pitches with all of them sounding instead of three, one control apart. The extra voices were already tuned; what changes is how much of the chord is there.",
+            settings: Settings {
+                tune_hz: 110.0,
+                decay_s: 4.0,
+                voices: 6,
+                voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
+                material: -0.5,
+                bright_db_oct: -3.0,
+                hit: crate::dsp::Point::new(0.14, 0.0),
+                pos_l: crate::dsp::Point::new(0.24, 0.0),
+                pos_r: crate::dsp::Point::new(0.68, 0.0),
+                ..on(Object::String)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Bell Chord",
+            group: g(Object::Beam),
+            description: "Four free bars tuned to a minor ninth. A bar's overtone sits at 2.76 rather than 2, so four of them are not four chords stacked but sixteen partials that belong to no key at all — which is what a chord of bars is for.",
+            settings: Settings {
+                tune_hz: 220.0,
+                decay_s: 5.0,
+                voices: 4,
+                voice_semis: [0.0, 7.0, 15.0, 26.0, 19.0, 24.0],
+                material: -0.4,
+                bright_db_oct: -2.5,
+                hit: crate::dsp::Point::new(0.12, 0.0),
+                pos_l: crate::dsp::Point::new(0.22, 0.0),
+                pos_r: crate::dsp::Point::new(0.78, 0.0),
+                ..on(Object::Beam)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Organ Stop",
+            group: g(Object::Pipe),
+            description: "A stopped rank at fifths and octaves: odd harmonics from each of six columns, which is how a mixture stop is built and why it colours a source without asserting a key.",
+            settings: Settings {
+                tune_hz: 110.0,
+                decay_s: 3.0,
+                radius_mm: 26.0,
+                opening: 0.0,
+                voices: 6,
+                voice_semis: [0.0, 7.0, 12.0, 19.0, 24.0, 31.0],
+                bright_db_oct: -3.0,
+                ..on(Object::Pipe)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Tine Ninth",
+            group: g(Object::Tine),
+            description: "Five clamped tines, struck a ninth of the way along, which puts a node under every ninth mode of each of them at once.",
+            settings: Settings {
+                tune_hz: 164.0,
+                decay_s: 4.5,
+                voices: 5,
+                voice_semis: [0.0, 7.0, 15.0, 22.0, 26.0, 24.0],
+                material: -0.5,
+                bright_db_oct: -4.0,
+                hit: crate::dsp::Point::new(1.0 / 9.0, 0.0),
+                pos_l: crate::dsp::Point::new(0.92, 0.0),
+                pos_r: crate::dsp::Point::new(0.74, 0.0),
+                ..on(Object::Tine)
             },
             modes: vec![],
         },

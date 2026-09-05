@@ -51,6 +51,44 @@ const SAMPLE_RATE = 48000;
 /** A labelled parameter with no range of its own spans its step indices. */
 const stepped = (list) => list.map((p) => (p.labels && p.max == null ? { min: 0, max: p.labels.length - 1, ...p } : p));
 
+/**
+ * The voice pitch ids, in the engine's order, published as `meta.voice_ids` so
+ * the page never builds `'voice' + n` by hand.
+ */
+export const VOICE_IDS = ['voice1', 'voice2', 'voice3', 'voice4', 'voice5', 'voice6'];
+
+/**
+ * The chord table, copied from `dsp::chord`.
+ *
+ * **A menu that fills the voice pitches, never a parameter.** A chord
+ * parameter would be a second place a voice's pitch is decided, and the moment
+ * somebody nudged one voice the two would disagree about what the chord is
+ * with no way to say which is true. A menu that only ever writes has no such
+ * state.
+ *
+ * **Voicings for a resonator rather than a keyboard**: the thirds and sevenths
+ * sit an octave up so each voice keeps its own register. Six fundamentals
+ * inside four semitones is one thick note rather than a chord.
+ */
+export const CHORDS = [
+  { group: 'Triads', name: 'Major', semis: [0, 7, 16], voices: 3 },
+  { group: 'Triads', name: 'Minor', semis: [0, 7, 15], voices: 3 },
+  { group: 'Triads', name: 'Diminished', semis: [0, 6, 15], voices: 3 },
+  { group: 'Triads', name: 'Augmented', semis: [0, 8, 16], voices: 3 },
+  { group: 'Triads', name: 'Sus 2', semis: [0, 7, 14], voices: 3 },
+  { group: 'Triads', name: 'Sus 4', semis: [0, 7, 17], voices: 3 },
+  { group: 'Sevenths', name: 'Major 7', semis: [0, 7, 16, 23], voices: 4 },
+  { group: 'Sevenths', name: 'Minor 7', semis: [0, 7, 15, 22], voices: 4 },
+  { group: 'Sevenths', name: 'Dominant 7', semis: [0, 7, 16, 22], voices: 4 },
+  { group: 'Sevenths', name: 'Half Diminished', semis: [0, 6, 15, 22], voices: 4 },
+  { group: 'Extended', name: 'Major 9', semis: [0, 7, 16, 23, 26], voices: 5 },
+  { group: 'Extended', name: 'Minor 9', semis: [0, 7, 15, 22, 26], voices: 5 },
+  { group: 'Stacks', name: 'Fifths', semis: [0, 7, 12, 19, 24, 31], voices: 6 },
+  { group: 'Stacks', name: 'Octaves', semis: [0, 12, 24], voices: 3 },
+  { group: 'Stacks', name: 'Fourths', semis: [0, 5, 10, 15, 20, 25], voices: 6 },
+  { group: 'Stacks', name: 'Unison', semis: [0], voices: 1 },
+];
+
 export const SELECT_LABELS = ['Loudest', 'Lowest', 'Log Spread'];
 export const LFO_SHAPES = ['Sine', 'Square', 'Triangle', 'Ramp Up', 'Ramp Down', 'S&H', 'Random Ramp'];
 export const FILTER_PLACES = ['Pre', 'Post'];
@@ -70,6 +108,22 @@ export const PARAMS = stepped([
   // this one spends a budget by contribution. The face still says Modes.
   { id: 'mode_budget', name: 'Modes', min: 4, max: MAX_MODES, default: 1024, taper: 'log', group: 'engine' },
   { id: 'select', name: 'Selection', labels: SELECT_LABELS, default: 0, group: 'engine' },
+
+  // The voices. **A voice is a root, not a partial**: each one gets the
+  // object's own series, so six voices on a Beam is six beams. That is why
+  // they sit beside the object rather than replacing it, and why the
+  // two-dimensional objects simply do not offer them.
+  { id: 'voices', name: 'Voices', min: 1, max: 6, default: 3, decimals: 0, group: 'chord' },
+  ...VOICE_IDS.map((id, i) => ({
+    id,
+    name: `Voice ${i + 1}`,
+    min: -24,
+    max: 36,
+    default: [0, 7, 16, 12, 19, 24][i],
+    decimals: 0,
+    unit: 'st',
+    group: 'chord',
+  })),
   { id: 'ratio', name: 'Ratio', min: 0.2, max: 5, default: 1, taper: 'log', group: 'body' },
   { id: 'bar_tuning', name: 'Bar Tuning', labels: BAR_TUNINGS, default: 0, group: 'body' },
   { id: 'bar_third', name: 'Third Partial', labels: BAR_THIRDS, default: 0, group: 'body' },
@@ -150,6 +204,20 @@ const BANK_ONLY = [
   'inharm', 'hit', 'pos_l', 'pos_r',
 ];
 
+/**
+ * The objects that offer voices — **the one-dimensional ones, and that is a
+ * consequence rather than a preference.**
+ *
+ * A mode's identity is the pair `(i, j)`, and a one-dimensional object leaves
+ * `j` at zero — so the voice goes there and a one-voice chord is bit-identical
+ * to the encoding that already ships. Nothing re-keys, no stream field is
+ * added, and every override in every saved preset stays where it was. A
+ * two-dimensional object already uses both indices, so voices there need a
+ * third, which is a decision to make later on evidence rather than now on
+ * principle.
+ */
+const HAS_VOICES = ['beam', 'marimba', 'string', 'tine', 'pipe', 'tube'];
+
 const TWO_D = ['membrane', 'plate', 'membrane_round', 'plate_round'];
 const HAS_ASPECT = ['membrane', 'plate'];
 
@@ -173,8 +241,10 @@ function usesFor(o) {
   if (o.engine === 'waveguide') {
     uses.push('radius', 'hit', 'pos_l', 'pos_r', 'bright');
     if (o.id === 'pipe') uses.push('opening');
+    if (HAS_VOICES.includes(o.id)) uses.push('voices', ...VOICE_IDS);
   } else {
     uses.push(...BANK_ONLY);
+    if (HAS_VOICES.includes(o.id)) uses.push('voices', ...VOICE_IDS);
     if (TWO_D.includes(o.id)) uses.push('hit_y', 'pos_l_y', 'pos_r_y');
     if (HAS_ASPECT.includes(o.id)) uses.push('ratio');
     if (o.id === 'marimba') uses.push('bar_tuning', 'bar_third');
@@ -209,6 +279,20 @@ export const OBJECT_TABLE = OBJECTS.map((o, i) => ({
  * `ceiling_hz`, would let it draw the wall where a mode bank runs out. All
  * three have been asked for. None is reconstructed here.
  */
+/**
+ * The chord half of the manifest meta, as `bridge_meta` publishes it.
+ *
+ * **This half is ahead of the engine and says so.** The build on the wire
+ * today still carries chord tuning as an eleventh *object*; the lead has ruled
+ * that it is orthogonal instead — voices on the six one-dimensional objects,
+ * the voice in `j`, and no `Chord` object — and res-engine is making that
+ * change. Design mode mirrors the ruling so the face can be built and looked
+ * at, which is the one thing this directory is for. **When the ruling reaches
+ * the wire this comment goes**, and the check is the same as every other
+ * contract change tonight: read it off a running bridge, not off a message.
+ */
+export const CHORD_META = { chords: CHORDS, voice_ids: VOICE_IDS, chord_voices: VOICE_IDS.length };
+
 export const MODES_LAYOUT = ['i', 'j', 'hz', 'db_l', 'db_r', 't60_s', 'db_bare', 'base_hz'];
 export const INFO_LAYOUT = [
   'modes_used', 'modes_available', 'crossover_hz', 'tail_db', 'limit_gr_db', 'inharm_b',
@@ -488,6 +572,7 @@ export const offline = {
     objects: OBJECT_TABLE,
     /** Stand-ins; the engine's own factory presets arrive here and replace them. */
     presets: PRESET_STANDINS,
+    ...CHORD_META,
   },
   params: PARAMS,
   streams: STREAMS,

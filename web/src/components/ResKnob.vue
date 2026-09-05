@@ -26,6 +26,7 @@
  */
 import { computed } from 'vue';
 import { useKnobGesture } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
+import { valueText } from '../format.js';
 
 const props = defineProps({
   p: { type: Object, required: true },
@@ -108,7 +109,7 @@ const marks = computed(() =>
       </svg>
     </div>
     <div class="knob__label">{{ label || p.name }}</div>
-    <div class="knob__value-text tabular">{{ off ? '—' : p.text }}</div>
+    <div class="knob__value-text tabular">{{ off ? '—' : valueText(p) }}</div>
     <div v-if="off || hint" class="knob__hint">{{ off ? off.short : hint }}</div>
   </div>
 </template>

@@ -1328,7 +1328,9 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
         MODE_FIELDS, 8,
         "i, j, hz, db_l, db_r, t60_s, db_bare, base_hz"
     );
-    assert_eq!(INFO_LEN, 13);
+    // Thirteen readouts and one available count per voice, appended so every
+    // existing index stays where it was.
+    assert_eq!(INFO_LEN, 13 + CHORD_VOICES);
     // `modes` is the stream; the parameter that spends the budget is
     // `mode_budget`. Two things called the same thing on one wire is a
     // collision somebody will hit, and the panel agent hit it.
@@ -1373,30 +1375,60 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
         // have offered a square for an object whose corners land on the rim,
         // where a clamped disc's every mode is zero.
         //
-        // **This asserts against the walk, not against the same `matches!`.**
+        // **This asserts against behaviour, not against the same `matches!`.**
         // Repeating the predicate here would agree with the mistake it is
-        // supposed to catch. What the engine actually does is observable: a
-        // polar object numbers its angular index from zero, because the
-        // axisymmetric family is real, and every other object starts at one;
-        // and only a two-dimensional object ever varies `j`.
+        // supposed to catch.
+        //
+        // It used to read the *walk* — only a two-dimensional object varies
+        // `j` — and the chord broke that premise rather than the code:
+        // its partials are `(voice, harmonic)` and need two indices, while
+        // its contacts are a position along one string and need one
+        // coordinate. **Two indices and two coordinates are different
+        // questions**, and a test that answered one while asking the other
+        // was going to be wrong the first time they came apart.
+        //
+        // So it asks the contacts directly: move the second coordinate and
+        // see whether any mode shape notices. A surface's does, a disc's does
+        // because `y` is its angle, and a line's and a chord's do not.
         if !guide {
             let shape = Shape {
                 object: Object::ALL[i],
                 ..Shape::default()
             };
-            let mut walk = Walk::new(shape, 8.0);
-            let first = walk.next().expect("an object has a fundamental");
-            let two_d = first.j != 0 || walk.any(|p| p.j != 0);
-            let want = if first.i == 0 {
-                "polar"
-            } else if two_d {
-                "xy"
-            } else {
+            // **Move a pickup, not the strike.** A disc takes the strike's
+            // own angle as its zero — rotating the whole picture changes
+            // nothing, so only the angle *between* the contacts can matter —
+            // and probing the excitation would have reported that a round
+            // membrane ignores its second coordinate. It does not; the
+            // reference does.
+            let exc = Point::new(0.37, 0.21);
+            let at = |y: f32| {
+                let p = Point::new(0.63, y);
+                let c = object::Contacts::new(shape, exc, p, p);
+                Walk::new(shape, 8.0)
+                    .take(24)
+                    .map(|q| c.psi(q.i, q.j).1)
+                    .collect::<Vec<f32>>()
+            };
+            let (lo, hi) = (at(0.11), at(0.83));
+            let uses_y = lo
+                .iter()
+                .zip(hi.iter())
+                .any(|(a, b)| (a - b).abs() > 1e-6 * a.abs().max(1.0));
+            let first_i = Walk::new(shape, 8.0)
+                .next()
+                .expect("an object has a fundamental")
+                .i;
+            let want = if !uses_y {
                 "line"
+            } else if first_i == 0 {
+                "polar"
+            } else {
+                "xy"
             };
             assert_eq!(
                 o["coords"], want,
-                "`{}` publishes contact coordinates its own walk does not use",
+                "`{}` publishes contact coordinates its own mode shapes do not use",
                 OBJECT_NAMES[i]
             );
         } else {
@@ -1700,7 +1732,17 @@ fn the_parameters_that_are_counts_say_so_and_nothing_else_moved() {
         .collect();
     assert_eq!(
         declared,
-        vec!["transpose", "mode_budget"],
+        vec![
+            "transpose",
+            "mode_budget",
+            "voices",
+            "voice1",
+            "voice2",
+            "voice3",
+            "voice4",
+            "voice5",
+            "voice6"
+        ],
         "the parameters declaring themselves whole numbers are not the ones that are"
     );
     assert_eq!(spec("fine").decimals, None, "a cent is not a whole number");
@@ -1821,6 +1863,341 @@ fn the_ruler_and_the_partials_come_from_the_same_moment() {
         worst_at.1,
         worst * 100.0
     );
+}
+
+#[test]
+fn one_voice_is_bit_identical_to_no_voices_at_all() {
+    // **The reason the voice went in `j` rather than `i`.** A mode has always
+    // been named `(i, j)` with `j` left at zero on a one-dimensional object,
+    // so a voice fits the free field exactly: nothing that anybody has saved
+    // moves, the override table keeps its key, and the `modes` array inside
+    // every preset keeps its meaning.
+    //
+    // Putting the voice in `i` — which is what I built before the ruling —
+    // would have renamed every existing partial on every existing object.
+    // This is the test that says the promise holds, and it is worth more than
+    // the argument for it.
+    for object in Object::ALL {
+        if !object.can_voice() {
+            continue;
+        }
+        let plain = Shape {
+            object,
+            ..Shape::default()
+        };
+        let voiced = Shape {
+            object,
+            voices: 1,
+            // Deliberately not zero: turning the count down to one must give
+            // the object at its own pitch, not at voice one's tuning.
+            voice_semis: [7.0, -5.0, 3.0, 0.0, 0.0, 0.0],
+            ..Shape::default()
+        };
+        let a: Vec<(u16, u16, f32)> = Walk::new(plain, 60.0)
+            .map(|p| (p.i, p.j, p.ratio))
+            .collect();
+        let b: Vec<(u16, u16, f32)> = Walk::new(voiced, 60.0)
+            .map(|p| (p.i, p.j, p.ratio))
+            .collect();
+        assert_eq!(
+            a, b,
+            "{object:?} with one voice walks differently from {object:?} with none"
+        );
+        assert!(
+            a.iter().all(|(_, j, _)| *j == 0),
+            "{object:?} with one voice published a partial with j != 0"
+        );
+        assert_eq!(
+            plain.available(60.0),
+            voiced.available(60.0),
+            "{object:?}: the count moved when nothing about the object did"
+        );
+    }
+}
+
+#[test]
+fn a_voice_transposes_the_objects_own_series_rather_than_replacing_it() {
+    // The whole point of the ruling: a chord is a set of roots and each root
+    // gets **this object's** series. A chord of beams is six copies of a
+    // bar's inharmonic series, not six harmonic ladders — which is the thing
+    // a bank of tuned combs cannot do at any setting.
+    //
+    // Equal temperament is a definition rather than physics, so the intervals
+    // are checked against published deviations from just intonation: those
+    // come from ratios of small integers rather than twelfth roots of two, so
+    // agreement is a real second opinion rather than arithmetic meeting
+    // itself.
+    for object in [Object::Beam, Object::String, Object::Tine, Object::Marimba] {
+        let shape = Shape {
+            object,
+            voices: 6,
+            voice_semis: [0.0, 4.0, 7.0, 9.0, 12.0, 2.0],
+            ..Shape::default()
+        };
+        let plain = Shape {
+            object,
+            ..Shape::default()
+        };
+        for (voice, name, just, want) in [
+            (0usize, "unison", 1.0f64, 0.0f64),
+            (1, "major third against 5:4", 5.0 / 4.0, 13.686),
+            (2, "fifth against 3:2", 3.0 / 2.0, -1.955),
+            (3, "major sixth against 5:3", 5.0 / 3.0, 15.641),
+            (4, "octave against 2:1", 2.0, 0.0),
+            (5, "major second against 9:8", 9.0 / 8.0, -3.910),
+        ] {
+            let got = 1200.0 * (shape.voice_ratio(voice as u16) / just).log2();
+            assert!(
+                (got - want).abs() < 0.01,
+                "{object:?}: the {name} comes out {got:.3} cents from just, published {want:.3}"
+            );
+            // And every mode of that voice is the object's own mode, moved.
+            for i in 1..=12u16 {
+                let moved = shape.ratio(i, voice as u16);
+                let own = plain.ratio(i, 0) * shape.voice_ratio(voice as u16);
+                assert!(
+                    (moved - own).abs() < 1e-9 * own.max(1.0),
+                    "{object:?} voice {voice} mode {i} is at {moved} and the transposed series puts it at {own}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_voiced_walk_covers_every_voice_whatever_order_they_are_tuned_in() {
+    // The voices are numbered as the user tuned them, never sorted, because
+    // an override is keyed to one — so the walk cannot assume the columns
+    // rise and must not stop at the first voice above the ceiling. A voice
+    // two octaves below the others is the case that catches it.
+    for object in [Object::String, Object::Beam, Object::Tine] {
+        let shape = Shape {
+            object,
+            voices: 4,
+            voice_semis: [24.0, -24.0, 19.0, 7.0, 0.0, 0.0],
+            ..Shape::default()
+        };
+        let max = 40.0;
+        let walked: Vec<(u16, u16)> = Walk::new(shape, max).map(|p| (p.i, p.j)).collect();
+        assert_eq!(
+            walked.len(),
+            shape.available(max),
+            "{object:?}: the walk yields {} partials and the count says {}",
+            walked.len(),
+            shape.available(max)
+        );
+        for v in 0..4u16 {
+            assert!(
+                walked.iter().any(|(_, j)| *j == v),
+                "{object:?}: voice {v} has no partials in the walk at all"
+            );
+        }
+        assert!(
+            !walked.iter().any(|(_, j)| *j > 3),
+            "{object:?}: a voice beyond the count is sounding"
+        );
+        let mut seen = walked.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            walked.len(),
+            "{object:?}: two partials share an (i, j)"
+        );
+    }
+}
+
+#[test]
+fn a_surface_does_not_offer_voices_and_says_why() {
+    // The four two-dimensional objects use `j` for their second lattice
+    // index, so a voice there needs a third field and a migration. That is a
+    // decision deferred on evidence, not a limit of the physics, and the meta
+    // has to say which — a greyed control with no reason is the thing this
+    // project keeps finding.
+    let meta = object_meta();
+    let list = meta.as_array().unwrap();
+    for (i, object) in Object::ALL.iter().enumerate() {
+        let uses = list[i]["uses"].as_array().unwrap();
+        let offers = uses.iter().any(|u| u == "voices");
+        assert_eq!(
+            offers,
+            object.can_voice(),
+            "`{}` offers voices: {offers}, and can carry them: {}",
+            OBJECT_NAMES[i],
+            object.can_voice()
+        );
+        if !object.can_voice() {
+            let note = list[i]["note"].as_str().unwrap_or("");
+            assert!(
+                note.contains("third mode index"),
+                "`{}` has no voices and does not say why: {note:?}",
+                OBJECT_NAMES[i]
+            );
+        }
+        // Voices are orthogonal to the engine, not to one of them: an air
+        // column is one-dimensional and gets them too.
+        if matches!(object, Object::Pipe | Object::Tube) {
+            assert!(offers, "an air column is a line and should carry voices");
+        }
+    }
+}
+
+#[test]
+fn every_published_chord_is_one_the_parameters_can_hold() {
+    // The dictionary is applied by writing the voice parameters, so a chord
+    // naming a pitch outside their range would load as something other than
+    // itself and nothing would say so. Checked against the specs rather than
+    // against a repeated constant.
+    let specs = param_specs(false);
+    let voices = specs.iter().find(|s| s.id == "voices").unwrap();
+    let v1 = specs.iter().find(|s| s.id == "voice1").unwrap();
+    let mut names: Vec<&str> = Vec::new();
+    for c in object::CHORDS {
+        assert!(
+            !c.semis.is_empty() && c.semis.len() <= CHORD_VOICES,
+            "`{}` has {} voices and the engine has {CHORD_VOICES}",
+            c.name,
+            c.semis.len()
+        );
+        assert!(
+            (c.semis.len() as f32) >= voices.min && (c.semis.len() as f32) <= voices.max,
+            "`{}` needs {} voices, outside what `voices` can hold",
+            c.name,
+            c.semis.len()
+        );
+        for semi in c.semis {
+            assert!(
+                *semi >= v1.min && *semi <= v1.max && semi.fract() == 0.0,
+                "`{}` names {semi} semitones, which a voice parameter cannot hold",
+                c.name
+            );
+        }
+        // Ascending, because the dictionary is a voicing and a reader reads
+        // it as one; the *parameters* may be in any order the user likes.
+        assert!(
+            c.semis.windows(2).all(|w| w[1] > w[0]),
+            "`{}` is not written lowest voice first",
+            c.name
+        );
+        names.push(c.name);
+    }
+    let total = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), total, "two chords share a name");
+}
+
+#[test]
+fn every_sounding_voice_keeps_a_partial_in_the_published_set() {
+    // **The panel agent's finding, turned into the guard.** The `modes` cut
+    // is over the whole table and so distributes by level, and a chord
+    // voicing is not level: at an ordinary six-voice spread they measured a
+    // string publishing 49/12/3/0/0/0 partials per voice and a membrane
+    // 61/3/0/0/0/0. Three sounding voices with no bars, and four \u2014 the user
+    // hears six and sees two, with nothing on the face able to tell "silent"
+    // from "lost the cut".
+    //
+    // So this builds exactly that: six voices with a level ladder steep
+    // enough that the quiet ones would certainly lose, and asserts each one
+    // still has a row. It is the same rule as the edited mode that is always
+    // published, and it fails without the fix rather than passing by luck.
+    for object in [Object::String, Object::Beam, Object::Tine, Object::Pipe] {
+        let ix = Object::ALL.iter().position(|o| *o == object).unwrap();
+        let set = Settings {
+            object: ix,
+            tune_hz: 110.0,
+            voices: 6,
+            // A spread voicing: the top voices are higher, quieter under the
+            // tilt, and much fewer partials fit under the ceiling.
+            voice_semis: [0.0, 12.0, 24.0, 31.0, 34.0, 36.0],
+            bright_db_oct: -6.0,
+            decay_s: 3.0,
+            ..Settings::default()
+        };
+        let mut e = Resonator::new(SR);
+        e.configure(&set);
+        let mut l = vec![0.0f32; bank::BLOCK];
+        let mut r = vec![0.0f32; bank::BLOCK];
+        for _ in 0..600 {
+            e.process(&mut l, &mut r);
+        }
+        let frame = e.modes_frame();
+        let mut per_voice = [0usize; CHORD_VOICES];
+        for row in frame.chunks(MODE_FIELDS) {
+            if row[2] <= 0.0 {
+                continue;
+            }
+            let v = row[1] as usize;
+            assert!(v < CHORD_VOICES, "{object:?}: a row claims voice {v}");
+            per_voice[v] += 1;
+        }
+        for (v, count) in per_voice.iter().enumerate() {
+            assert!(
+                *count > 0,
+                "{object:?}: voice {v} is sounding and has no partial in the published set, — {per_voice:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_voice_says_how_many_partials_it_has_and_not_only_how_many_are_drawn() {
+    // The other half of the same ruling. A voice reduced to one bar reads as
+    // a voice with one partial unless the page can say "one of sixty-four",
+    // and it can only say that if the count is published. NaN for a voice
+    // that is not sounding, which is this contract's rule for every field
+    // that does not apply.
+    for object in [Object::String, Object::Beam, Object::Pipe] {
+        let ix = Object::ALL.iter().position(|o| *o == object).unwrap();
+        for voices in [1usize, 4, 6] {
+            let set = Settings {
+                object: ix,
+                tune_hz: 110.0,
+                voices,
+                voice_semis: [0.0, 7.0, 12.0, 19.0, 24.0, 31.0],
+                ..Settings::default()
+            };
+            let mut e = Resonator::new(SR);
+            e.configure(&set);
+            let mut l = vec![0.0f32; bank::BLOCK];
+            let mut r = vec![0.0f32; bank::BLOCK];
+            for _ in 0..600 {
+                e.process(&mut l, &mut r);
+            }
+            let f = e.info_frame();
+            let mut sum = 0.0f32;
+            for v in 0..CHORD_VOICES {
+                let got = f[13 + v];
+                if v < voices {
+                    assert!(
+                        got.is_finite() && got >= 1.0 && got.fract() == 0.0,
+                        "{object:?} with {voices} voices: voice {v} publishes {got}"
+                    );
+                    sum += got;
+                } else {
+                    assert!(
+                        got.is_nan(),
+                        "{object:?}: voice {v} is not sounding and publishes {got}"
+                    );
+                }
+            }
+            // A higher voice has less room under the ceiling, so the counts
+            // fall as the voices rise — which is the fact that makes the
+            // published number worth having.
+            if voices > 1 {
+                assert!(
+                    f[13] >= f[13 + voices - 1],
+                    "{object:?}: the root voice has fewer partials than the top one"
+                );
+            }
+            // And they add up to what the whole object reports.
+            assert!(
+                (sum - f[1]).abs() <= 1.0,
+                "{object:?} with {voices} voices: the per-voice counts total {sum} and the object reports {}",
+                f[1]
+            );
+        }
+    }
 }
 
 #[test]
@@ -2267,6 +2644,8 @@ fn every_setting_survives_a_preset_round_trip() {
         aspect: 2.75,
         bar_tuning: 1,
         bar_third: 1,
+        voices: 5,
+        voice_semis: [-5.0, 2.0, 9.0, 14.0, 21.0, 33.0],
         radius_mm: 47.0,
         opening: 0.37,
         decay_s: 7.5,
@@ -2447,6 +2826,7 @@ fn every_pair_differs_by_exactly_the_one_control_it_argues_about() {
         ("Wood", "Bronze", "material"),
         ("Stopped Pipe", "Open Pipe", "opening"),
         ("Timpani", "Timpani, Bank Only", "tail"),
+        ("Struck Triad", "Struck Six", "voices"),
     ];
     for (a, b, id) in pairs {
         let (x, y) = (by_name(a), by_name(b));

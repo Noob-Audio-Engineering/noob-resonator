@@ -25,6 +25,7 @@
 import { computed } from 'vue';
 import { Segmented, Toggle } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import ResKnob from './ResKnob.vue';
+import { noteName, useChords } from '../composables/useChords.js';
 import { contactAxes, coordsOf, hzText, inactive, stiffnessText, timeText, useInfo, useModes, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
 
 const r = useRes();
@@ -73,6 +74,34 @@ const tailHint = computed(() =>
 );
 const barOff = computed(() => off('bar_tuning'));
 
+const chords = useChords();
+
+/** The root every voice is an offset from, so a knob can print the note as well as the interval. */
+const rootHz = computed(() =>
+  r.tune ? r.tune.plain * 2 ** ((r.transpose?.plain || 0) / 12 + (r.fine?.plain || 0) / 1200) : 0,
+);
+
+/**
+ * Why a voice knob is dim.
+ *
+ * Two different reasons, and they are worth telling apart. **The object has no
+ * voices at all** — the two-dimensional ones, where the engine does not read
+ * them and `uses` says so. Or **the voice is past the count**: the parameter is
+ * live and automatable and the engine is simply not sounding it, which is a
+ * setting rather than a property of the object. A control that is dim for the
+ * second reason comes back the moment Voices goes up, and saying which is
+ * which is the difference between "not on this object" and "not right now".
+ */
+function voiceOff(index) {
+  const byObject = off('voices');
+  if (byObject) return byObject;
+  if (index < chords.sounding) return null;
+  return {
+    short: 'past the voice count',
+    why: `Voices is at ${chords.sounding}, so this one is not sounding. Raise Voices and it comes back — the pitch you set here is kept either way.`,
+  };
+}
+
 /**
  * What the contact controls are called on this object.
  *
@@ -112,6 +141,29 @@ const ax = (base, which) => {
           <Segmented v-if="r.barThird" :p="r.barThird" class="keys keys--tiny" />
           <span class="deck__hint">{{ barOff ? barOff.short : 'the maker’s two choices' }}</span>
         </div>
+      </div>
+    </section>
+
+    <!--
+      The voices, which tune the object rather than replacing it: each one is
+      a root and every root gets this object's own series. A chord of beams is
+      still beams, which is why this sits beside Body rather than instead of it.
+    -->
+    <section v-if="chords.has && r.voices" class="deck__group plate">
+      <h3 class="cap deck__head">
+        Chord<span class="why">{{ off('voices') ? off('voices').short : `what it is tuned to · ${chords.label}` }}</span>
+      </h3>
+      <div class="deck__row">
+        <ResKnob :p="r.voices" label="Voices" :size="48" :off="off('voices')" hint="how many roots sound" />
+        <ResKnob
+          v-for="(p, i) in chords.pitches"
+          :key="chords.ids[i]"
+          :p="p"
+          :label="`Voice ${i + 1}`"
+          :size="40"
+          :off="voiceOff(i)"
+          :hint="noteName(rootHz, p.plain) || 'semitones from the root'"
+        />
       </div>
     </section>
 

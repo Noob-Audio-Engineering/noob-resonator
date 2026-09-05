@@ -45,7 +45,7 @@ use crate::dsp::damp::{self, Damping};
 use crate::dsp::filters::{Limiter, Svf, q_from_octaves};
 use crate::dsp::guide::{self, Guide};
 use crate::dsp::lfo::Lfo;
-use crate::dsp::object::{Engine as ObjEngine, Object, Point, Shape};
+use crate::dsp::object::{CHORD_VOICES, Engine as ObjEngine, Object, Point, Shape};
 use crate::dsp::select::{self, Request, Selector};
 use crate::dsp::tail::{BANDS, Tail};
 
@@ -54,8 +54,15 @@ use crate::dsp::tail::{BANDS, Tail};
 pub const MAX_EDITS: usize = 64;
 /// Values in one `modes` frame.
 pub const MODE_FIELDS: usize = 8;
-/// Values in one `info` frame.
-pub const INFO_LEN: usize = 13;
+/// Values in one `info` frame: thirteen readouts, then one available count
+/// per voice.
+///
+/// **The per-voice counts are appended rather than given their own stream**,
+/// because they are read at the same moment and by the same code as the
+/// thirteen, and a second stream would be a second arrival time to reconcile
+/// — which is the fault that made a ratio-1 partial draw at 1.2. Appending
+/// also leaves every existing index where it was.
+pub const INFO_LEN: usize = 13 + CHORD_VOICES;
 /// Points on the response curve.
 pub const RESPONSE_POINTS: usize = 512;
 /// Points of the response curve refreshed per block, so a redraw never lands
@@ -175,6 +182,10 @@ pub struct Settings {
     pub aspect: f32,
     pub bar_tuning: usize,
     pub bar_third: usize,
+    /// How many of the chord's voices are sounding.
+    pub voices: usize,
+    /// Each voice's pitch in semitones from the root, in the user's order.
+    pub voice_semis: [f32; CHORD_VOICES],
     pub radius_mm: f32,
     pub opening: f32,
     pub decay_s: f32,
@@ -222,6 +233,8 @@ impl Default for Settings {
             aspect: 1.0,
             bar_tuning: 0,
             bar_third: 0,
+            voices: 1,
+            voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
             radius_mm: guide::RADIUS_REF_MM,
             opening: 0.0,
             decay_s: 2.0,
@@ -280,6 +293,8 @@ impl Settings {
     pub fn shape(&self) -> Shape {
         Shape {
             object: self.object(),
+            voices: self.voices.clamp(1, CHORD_VOICES) as u8,
+            voice_semis: self.voice_semis,
             aspect: self.aspect,
             inharm_b: self.inharm_b(),
             bar_tuning: self.bar_tuning,
@@ -304,7 +319,14 @@ pub struct Resonator {
     sr: f32,
     set: Settings,
     banks: [Bank; 2],
-    guides: [Guide; 2],
+    /// One air column per side per voice.
+    ///
+    /// A waveguide is a loop rather than a bank, so a second pitch is a
+    /// second loop: there is no set of modes to add to. Six of them is still
+    /// far cheaper than a mode bank of the same reach — a loop costs the same
+    /// whatever number of harmonics comes out of it — which is exactly the
+    /// property that makes voices affordable here at all.
+    guides: [[Guide; CHORD_VOICES]; 2],
     tail: Tail,
     sel: Selector,
     lfo: Lfo,
@@ -331,6 +353,9 @@ pub struct Resonator {
     wr: Vec<f32>,
     bl: Vec<f32>,
     br: Vec<f32>,
+    /// A third scratch pair, needed once the air columns sum several voices:
+    /// the accumulator and the voice being added cannot be the same buffer.
+    gr: Vec<f32>,
     dry_l: Vec<f32>,
     dry_r: Vec<f32>,
 
@@ -382,7 +407,7 @@ impl Resonator {
             sr,
             set: Settings::default(),
             banks: [Bank::new(sr), Bank::new(sr)],
-            guides: [Guide::new(sr), Guide::new(sr)],
+            guides: std::array::from_fn(|_| std::array::from_fn(|_| Guide::new(sr))),
             tail: Tail::new(sr),
             sel: Selector::new(max),
             lfo: Lfo::default(),
@@ -398,6 +423,7 @@ impl Resonator {
             wr: vec![0.0; crate::dsp::bank::BLOCK],
             bl: vec![0.0; crate::dsp::bank::BLOCK],
             br: vec![0.0; crate::dsp::bank::BLOCK],
+            gr: vec![0.0; crate::dsp::bank::BLOCK],
             dry_l: vec![0.0; crate::dsp::bank::BLOCK],
             dry_r: vec![0.0; crate::dsp::bank::BLOCK],
             loaded: 0,
@@ -432,7 +458,7 @@ impl Resonator {
         for b in self.banks.iter_mut() {
             b.set_sample_rate(sr);
         }
-        for g in self.guides.iter_mut() {
+        for g in self.guides.iter_mut().flatten() {
             g.set_sample_rate(sr);
         }
         self.tail.set_sample_rate(sr);
@@ -446,7 +472,7 @@ impl Resonator {
         for b in self.banks.iter_mut() {
             b.reset();
         }
-        for g in self.guides.iter_mut() {
+        for g in self.guides.iter_mut().flatten() {
             g.reset();
         }
         self.tail.reset();
@@ -474,9 +500,14 @@ impl Resonator {
         &self.banks[0]
     }
 
-    /// The air column, likewise.
+    /// The air column, likewise: the root voice's loop.
     pub fn guide(&self) -> &Guide {
-        &self.guides[0]
+        &self.guides[0][0]
+    }
+
+    /// How many voices the current object is actually sounding.
+    pub fn voices(&self) -> usize {
+        self.set.shape().voice_count() as usize
     }
 
     /// The selector, so a measurement can ask what it found and how long it
@@ -556,13 +587,19 @@ impl Resonator {
     pub fn info_frame(&self) -> [f32; INFO_LEN] {
         let object = self.set.object();
         let guide = object.engine() == ObjEngine::Guide;
+        let voices = self.voices();
         let used = if guide {
-            self.guides[0].resonances().len() * if self.stereo { 2 } else { 1 }
+            (0..voices)
+                .map(|v| self.guides[0][v].resonances().len())
+                .sum::<usize>()
+                * if self.stereo { 2 } else { 1 }
         } else {
             self.banks[0].len() * if self.stereo { 2 } else { 1 }
         };
         let available = if guide {
-            self.guides[0].resonances().len()
+            (0..voices)
+                .map(|v| self.guides[0][v].resonances().len())
+                .sum::<usize>()
         } else {
             self.sel.available()
         };
@@ -589,14 +626,66 @@ impl Resonator {
             },
             if self.set.limiter { self.limit_db } else { na },
             if guide { na } else { self.set.inharm_b() },
-            if guide { self.guides[0].column_m() } else { na },
-            if guide { self.guides[0].loop_ms() } else { na },
-            if guide { self.guides[0].open_hz() } else { na },
+            // The root voice's column, which is the one the object is
+            // tuned to; a voiced rank has six lengths and one number cannot
+            // be all of them.
+            if guide {
+                self.guides[0][0].column_m()
+            } else {
+                na
+            },
+            if guide {
+                self.guides[0][0].loop_ms()
+            } else {
+                na
+            },
+            if guide {
+                self.guides[0][0].open_hz()
+            } else {
+                na
+            },
             if guide { 1.0 } else { 0.0 },
             self.sel.progress(),
             self.readout_f0,
             self.ceiling_hz(),
+            // **How many partials each voice has, so a page can say how many
+            // it is not showing.** Publishing only what is drawn leaves a
+            // voice reduced to one bar reading as a voice with one partial;
+            // measured at an ordinary six-voice spread, four of six arrive
+            // that way. NaN for a voice that is not sounding, which is the
+            // same rule as every other field that does not apply.
+            self.voice_available(0),
+            self.voice_available(1),
+            self.voice_available(2),
+            self.voice_available(3),
+            self.voice_available(4),
+            self.voice_available(5),
         ]
+    }
+
+    /// How many partials voice `v` has under the ceiling, or NaN if it is not
+    /// sounding.
+    fn voice_available(&self, v: usize) -> f32 {
+        let shape = self.set.shape();
+        if v >= shape.voice_count() as usize {
+            return f32::NAN;
+        }
+        if self.set.object().engine() == ObjEngine::Guide {
+            return self.guides[0]
+                .get(v)
+                .map(|g| g.resonances().len() as f32)
+                .unwrap_or(f32::NAN);
+        }
+        let f_max = (self.sr * 0.49).min(AUDIBLE_MAX_HZ);
+        let f0 = self.set.damping().f0.max(1e-3);
+        let all = shape.available((f_max / f0) as f64);
+        if shape.voice_count() == 1 {
+            return all as f32;
+        }
+        // Per voice, the object's own reach with the ceiling divided by that
+        // voice's transposition.
+        let one = Shape { voices: 1, ..shape };
+        one.available((f_max / f0) as f64 / shape.voice_ratio(v as u16)) as f32
     }
 
     /// The highest frequency the bank has a partial at, or **NaN when there
@@ -684,10 +773,24 @@ impl Resonator {
 
         let object = s.object();
         if object.engine() == ObjEngine::Guide {
-            let (a, b) = self.guides.split_at_mut(1);
-            a[0].process(&self.exc[..n], &mut self.wl[..n], &mut self.wr[..n]);
+            let voices = s.shape().voice_count() as usize;
+            let (left, right) = self.guides.split_at_mut(1);
+            left[0][0].process(&self.exc[..n], &mut self.wl[..n], &mut self.wr[..n]);
+            for v in 1..voices {
+                left[0][v].process(&self.exc[..n], &mut self.bl[..n], &mut self.br[..n]);
+                for i in 0..n {
+                    self.wl[i] += self.bl[i];
+                    self.wr[i] += self.br[i];
+                }
+            }
             if self.stereo {
-                b[0].process(&self.exc[..n], &mut self.bl[..n], &mut self.br[..n]);
+                self.br[..n].fill(0.0);
+                for v in 0..voices {
+                    right[0][v].process(&self.exc[..n], &mut self.bl[..n], &mut self.gr[..n]);
+                    for i in 0..n {
+                        self.br[i] += self.gr[i];
+                    }
+                }
                 self.wr[..n].copy_from_slice(&self.br[..n]);
             }
         } else {
@@ -779,7 +882,7 @@ impl Resonator {
 
     fn prepare_guide(&mut self, a: f32, b: f32) {
         let s = self.set;
-        let mut g = guide::Settings {
+        let g = guide::Settings {
             f0: a,
             opening: if s.object() == Object::Tube {
                 1.0
@@ -793,14 +896,25 @@ impl Resonator {
             pos_l: s.pos_l.x,
             pos_r: s.pos_r.x,
         };
-        if *self.guides[0].settings() != g {
-            self.guides[0].configure(&g);
-            self.curves_dirty = true;
-        }
-        if self.stereo {
-            g.f0 = b;
-            if *self.guides[1].settings() != g {
-                self.guides[1].configure(&g);
+        // Each voice is the same column at another pitch, so it is the same
+        // settings with `f0` moved. Reconfiguring only what changed keeps a
+        // voice's loop from being rebuilt because a neighbour moved.
+        let shape = s.shape();
+        let voices = shape.voice_count() as usize;
+        for side in 0..if self.stereo { 2 } else { 1 } {
+            let root = if side == 0 { a } else { b };
+            for v in 0..CHORD_VOICES {
+                let mut gv = g;
+                gv.f0 = root * shape.voice_ratio(v as u16) as f32;
+                // A voice past the count is silenced rather than left
+                // ringing at its old pitch.
+                gv.decay = if v < voices { g.decay } else { 0.0 };
+                if *self.guides[side][v].settings() != gv {
+                    self.guides[side][v].configure(&gv);
+                    if side == 0 {
+                        self.curves_dirty = true;
+                    }
+                }
             }
         }
         self.f0 = [a, b];
@@ -1028,21 +1142,30 @@ impl Resonator {
         let mut rows: [Row; MAX_EDITS] = [[0.0; MODE_FIELDS]; MAX_EDITS];
         let mut n = 0usize;
         if object.engine() == ObjEngine::Guide {
-            for res in self.guides[0].resonances().iter().take(MAX_EDITS) {
-                rows[n] = [
-                    res.n as f32,
-                    0.0,
-                    res.hz,
-                    db(res.amp_l),
-                    db(res.amp_r),
-                    res.t60,
-                    db(res.bare),
-                    // An air column's series is set by its terminations, so
-                    // there is no unstretched frequency to report.
-                    res.hz,
-                ];
-                n += 1;
+            let voices = self.voices();
+            for v in 0..voices {
+                for res in self.guides[0][v].resonances() {
+                    if n == MAX_EDITS {
+                        break;
+                    }
+                    rows[n] = [
+                        res.n as f32,
+                        v as f32,
+                        res.hz,
+                        db(res.amp_l),
+                        db(res.amp_r),
+                        res.t60,
+                        db(res.bare),
+                        // An air column's series is set by its terminations,
+                        // so there is no unstretched frequency to report.
+                        res.hz,
+                    ];
+                    n += 1;
+                }
             }
+            rows[..n].sort_unstable_by(|p, q| {
+                p[2].partial_cmp(&q[2]).unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
             // The loudest, not the lowest: the display should show what is
             // audible, which is the same decision the selector makes.
@@ -1090,6 +1213,41 @@ impl Resonator {
                 p[2].partial_cmp(&q[2]).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
+        // **Every sounding voice keeps its loudest partial, however quiet.**
+        //
+        // The cut is over the whole table, so it distributes by level, and a
+        // chord voicing is not level: measured over the real series at an
+        // ordinary 6 dB spread, a string published 49/12/3/0/0/0 partials per
+        // voice and a membrane 61/3/0/0/0/0. Three sounding voices with no
+        // bars at all, and four — the user hears six voices, sees two, and
+        // has no way to tell "silent" from "lost the cut".
+        //
+        // It is the same rule that already keeps an edited mode in the
+        // picture however far down the edit took it, for the same reason: a
+        // display that claims to show what is sounding must show it. Found
+        // and quantified by the panel agent, prototyping against the real
+        // tables rather than reasoning about them.
+        let voices = self.set.shape().voice_count() as usize;
+        if voices > 1 {
+            for v in 0..voices {
+                if rows[..n].iter().any(|r| r[1] as usize == v && r[2] > 0.0) {
+                    continue;
+                }
+                let Some(best) = self.loudest_of_voice(v) else {
+                    continue;
+                };
+                let slot = if n < MAX_EDITS {
+                    n += 1;
+                    n - 1
+                } else {
+                    argmin_amp(&rows[..n])
+                };
+                rows[slot] = best;
+            }
+            rows[..n].sort_unstable_by(|p, q| {
+                p[2].partial_cmp(&q[2]).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         for (k, row) in rows[..n].iter().enumerate() {
             let base = k * MODE_FIELDS;
             self.modes_frame[base..base + MODE_FIELDS].copy_from_slice(row);
@@ -1111,7 +1269,9 @@ impl Resonator {
         for i in self.response_cursor..end {
             let hz = Self::response_hz(i, self.sr);
             let m = if guide {
-                self.guides[0].response(hz)
+                (0..self.voices())
+                    .map(|v| self.guides[0][v].response(hz))
+                    .sum::<f32>()
             } else {
                 self.banks[0].response(hz)
             };
@@ -1126,6 +1286,54 @@ impl Resonator {
 
 /// One published partial: the `modes` frame's row layout.
 type Row = [f32; MODE_FIELDS];
+
+impl Resonator {
+    /// The loudest partial belonging to one voice, as a published row.
+    ///
+    /// Used only to honour the rule above, so it looks in whichever engine is
+    /// running rather than assuming a bank.
+    fn loudest_of_voice(&self, v: usize) -> Option<Row> {
+        if self.set.object().engine() == ObjEngine::Guide {
+            let mut best: Option<&crate::dsp::guide::Resonance> = None;
+            for r in self.guides[0].get(v)?.resonances() {
+                let a = r.amp_l.abs().max(r.amp_r.abs());
+                if best.is_none_or(|b| a > b.amp_l.abs().max(b.amp_r.abs())) {
+                    best = Some(r);
+                }
+            }
+            let r = best?;
+            return Some([
+                r.n as f32,
+                v as f32,
+                r.hz,
+                db(r.amp_l),
+                db(r.amp_r),
+                r.t60,
+                db(r.bare),
+                r.hz,
+            ]);
+        }
+        let info = self.banks[0].info();
+        let mut best: Option<&ModeInfo> = None;
+        for m in info.iter().filter(|m| m.j as usize == v) {
+            let a = m.amp_l.abs().max(m.amp_r.abs());
+            if best.is_none_or(|b| a > b.amp_l.abs().max(b.amp_r.abs())) {
+                best = Some(m);
+            }
+        }
+        let m = best?;
+        Some([
+            m.i as f32,
+            m.j as f32,
+            m.hz,
+            db(m.amp_l),
+            db(m.amp_r),
+            m.t60,
+            db(m.bare),
+            m.base_hz,
+        ])
+    }
+}
 
 fn argmin_amp(rows: &[Row]) -> usize {
     let mut best = 0usize;

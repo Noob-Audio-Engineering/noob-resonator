@@ -36,6 +36,7 @@ import { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js'
 
 export { getClient, hasParam, hasStream, useParam, useNoobVstWebguiFramework, useStoredRef };
 export { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js';
+export { valueText } from '../format.js';
 
 /** Smallest window the panel lays out in, `[width, height]` CSS pixels; the Rust side will clamp to the same. */
 export const WINDOW_MIN = [900, 520];
@@ -59,6 +60,15 @@ export function useRes() {
   res = {
     type: p('type'),
     select: p('select'),
+    /**
+     * How many voices sound, and where each one sits.
+     *
+     * **A voice is a root, not a partial.** Each one gets the object's own
+     * series, so six voices on a Beam is six beams rather than something that
+     * is no longer a beam — which is the whole reason chord tuning is
+     * orthogonal to the object rather than being an object of its own.
+     */
+    voices: p('voices'),
     modes: p('mode_budget'),
     tune: p('tune'),
     transpose: p('transpose'),
@@ -760,6 +770,8 @@ export const ui = reactive({
   browsing: false,
   /** The preset browser is up. Only ever one of the two: they are both whole-page layers. */
   presets: false,
+  /** The chord menu is up. A third layer, and the same rule: only ever one. */
+  chords: false,
 });
 
 /** Whether the bench panel is shown. Off by default: everything this panel has to say is already on its face. */
