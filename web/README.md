@@ -77,6 +77,25 @@ Opening sweeps; the stiff-string stretch; and the mode shapes. What left was
 `beamEigenvalues`, `besselZeros`, `circleModes` and every Newton loop in the
 front end.
 
+**The same rule settled an argument about a decimal point, and the way it
+settled is the point.** The Modes knob read `1024.0`, and a count of resonators
+has no tenths — so the page rounded it. That worked, and it was a second copy
+of one decision in a second language. Neither engine-side fix was free either:
+both ways of making the plain value integral snapped a preset asking for 1,024
+modes onto 1,021, because `steps` quantises before the log taper is applied over
+it. What was missing was a way for the manifest to *say* the thing, so the
+framework grew a `decimals` hint, `mode_budget` and `transpose` declare it, and
+the page's override was deleted rather than kept as a belt. It reads `1024` and
+`0 st` now, and `fine` still reads `0.00 ct`, because a cent is a real quantity
+and 12.5 of them means something.
+
+Worth recording how the override was retired rather than only that it was: it
+was written to disappear on its own — returning nothing as soon as the
+parameter declared a `decimals` — because at the time no build I could reach
+published the hint, and deleting a working workaround on the strength of a
+commit message is how a knob goes back to `1024.0` unnoticed. It came out for
+good once the field was seen on the wire.
+
 The tests changed shape with it, and improved. They used to check the page's
 solver against the literature; they now feed **the engine's own table** back
 through the equation that defines it — each beam ratio turned into `β₁√r` and

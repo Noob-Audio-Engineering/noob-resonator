@@ -36,21 +36,6 @@ const props = defineProps({
   ticks: { type: Number, default: 11 },
   off: { type: Object, default: null },
   hint: { type: String, default: null },
-  /**
-   * What to print instead of the engine's own text, for the one control whose
-   * plain value is a count.
-   *
-   * **Used once, and deliberately narrow.** `mode_budget` is a number of
-   * resonators, so the engine's `24.0` reads as a false precision the way
-   * `1.00 kHz` does — and the fraction is genuine, because an intermediate
-   * knob position really is 23.7 modes and the engine rounds it. The manifest
-   * has no field saying "this one is a count", and both ways of making the
-   * plain value integral cost fidelity: they snap a preset asking for 1,024
-   * modes onto 1,021. So the rounding belongs here, on the face, and nowhere
-   * else — res-engine has asked the framework for a `decimals` hint, which is
-   * where it should live for every plug-in with a count parameter.
-   */
-  text: { type: String, default: null },
 });
 
 const { handlers, dragging } = useKnobGesture(props.p);
@@ -123,7 +108,7 @@ const marks = computed(() =>
       </svg>
     </div>
     <div class="knob__label">{{ label || p.name }}</div>
-    <div class="knob__value-text tabular">{{ off ? '—' : text || p.text }}</div>
+    <div class="knob__value-text tabular">{{ off ? '—' : p.text }}</div>
     <div v-if="off || hint" class="knob__hint">{{ off ? off.short : hint }}</div>
   </div>
 </template>

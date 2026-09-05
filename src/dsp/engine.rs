@@ -357,6 +357,9 @@ pub struct Resonator {
     /// How many times running the mode search has been abandoned and started
     /// again without ever finishing. See [`RESTART_LIMIT`].
     restarts: u32,
+    /// The fundamental the published mode table was built at, which is what
+    /// `f0_hz` reports — **not** the current one. See [`Self::info_frame`].
+    readout_f0: f32,
 
     meter: [f32; 4],
     modes_frame: Vec<f32>,
@@ -406,6 +409,7 @@ impl Resonator {
             cross_key: None,
             applied: None,
             restarts: 0,
+            readout_f0: 220.0,
             meter: [0.0; 4],
             modes_frame: vec![0.0; MAX_EDITS * MODE_FIELDS],
             response: vec![-120.0; RESPONSE_POINTS],
@@ -590,7 +594,7 @@ impl Resonator {
             if guide { self.guides[0].open_hz() } else { na },
             if guide { 1.0 } else { 0.0 },
             self.sel.progress(),
-            self.f0[0],
+            self.readout_f0,
             self.ceiling_hz(),
         ]
     }
@@ -1007,6 +1011,18 @@ impl Resonator {
     /// Fill the partials frame with the loudest published partials, ascending
     /// in frequency.
     fn publish_modes(&mut self) {
+        // **The ruler is part of the picture, so it is taken here.** The mode
+        // table is a sticky stream, sent only when it changes; `info` goes out
+        // every block. So a page holding the newest `info` and the last table
+        // it received was dividing one moment's frequencies by another
+        // moment's fundamental, and a partial whose ratio is exactly 1 drew at
+        // 1.2. Taking `f0_hz` at the instant the rows are built makes the two
+        // one moment by construction, and costs nothing when they agree, which
+        // is almost always. Found by the panel agent, who could see it and
+        // could not fix it: the lowest *drawn* partial is not the fundamental
+        // in general — a strike on a node removes partial 1 outright — so the
+        // ruler cannot be inferred from the bars.
+        self.readout_f0 = self.f0[0];
         self.modes_frame.fill(0.0);
         let object = self.set.object();
         let mut rows: [Row; MAX_EDITS] = [[0.0; MODE_FIELDS]; MAX_EDITS];

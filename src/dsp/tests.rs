@@ -1740,6 +1740,90 @@ fn the_parameters_that_are_counts_say_so_and_nothing_else_moved() {
 }
 
 #[test]
+fn the_ruler_and_the_partials_come_from_the_same_moment() {
+    // **Two streams, one picture.** The mode table is sticky and goes out only
+    // when it changes; `info` goes out every block. So a page holding the
+    // newest `info` and the last table it received was dividing one moment's
+    // frequencies by another moment's fundamental — and the oscillator is
+    // enough to do it, because it moves the pitch every block through the
+    // retune path while the table is republished every `READOUT_BLOCKS`.
+    // Measured before the fix, with the LFO at ordinary settings: a partial
+    // whose ratio is exactly 1 drew at **1.2035x**, and 0.83x the other way.
+    //
+    // Found by the panel agent, who could see it and could not fix it: the
+    // lowest *drawn* partial is not the fundamental in general — a strike on a
+    // node removes partial 1 outright — so a page cannot infer its ruler from
+    // the bars and must be given one it can trust.
+    //
+    // This holds the frames the way the page does, which is the whole point:
+    // reading both accessors in the same breath cannot see the fault, because
+    // in-process they are always current. `Processor::publish` sends the table
+    // only when it differs, so the test keeps the last one that differed.
+    let mut e = Resonator::new(SR);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    let set = Settings {
+        object: 2, // String, whose partial `i` has ratio exactly `i`
+        tune_hz: 220.0,
+        inharm: 0.0,
+        lfo_on: true,
+        lfo_rate_hz: 2.0,
+        lfo_depth_st: 12.0,
+        ..Settings::default()
+    };
+    e.configure(&set);
+    for _ in 0..600 {
+        e.process(&mut l, &mut r);
+    }
+
+    let mut held = e.modes_frame().to_vec();
+    let mut worst = 0.0f32;
+    let mut worst_at = (0.0f32, 0.0f32);
+    let mut checked = 0usize;
+    for _ in 0..1200 {
+        e.configure(&set);
+        e.process(&mut l, &mut r);
+        if held != e.modes_frame() {
+            held.copy_from_slice(e.modes_frame());
+        }
+        let f0 = e.info_frame()[11];
+        assert!(f0 > 0.0, "the published fundamental is {f0}");
+        for row in held.chunks(MODE_FIELDS) {
+            let (i, hz) = (row[0], row[2]);
+            if hz <= 0.0 {
+                break; // the table is terminated by hz = 0
+            }
+            // Partials the retune had to hold at Nyquist are not part of
+            // this claim: `hz` is where the partial actually sounds, and one
+            // pushed past the axis by the oscillator is clamped there rather
+            // than allowed to fold. A page drawing that at 53 times the
+            // fundamental is drawing the truth. So the ruler is checked
+            // against the partials that are still where the series puts them.
+            if i * f0 > 0.9 * SR * 0.49 {
+                continue;
+            }
+            // An ideal string's partial `i` sits at exactly `i` times its
+            // fundamental, so the ratio a page draws has to come back as `i`.
+            let drawn = hz / f0;
+            let err = (drawn - i).abs() / i;
+            if err > worst {
+                worst = err;
+                worst_at = (i, drawn);
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 10_000, "only {checked} partials were checked");
+    assert!(
+        worst < 1e-4,
+        "partial {} draws at {:.4} times the published fundamental, {:.2}% out",
+        worst_at.0,
+        worst_at.1,
+        worst * 100.0
+    );
+}
+
+#[test]
 fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
     // Found live by the panel agent, driving every control to both ends: a
     // string at negative Inharm published 18,446,744,073,709,551,615

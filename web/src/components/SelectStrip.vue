@@ -52,18 +52,6 @@ const word = computed(() => {
 const wall = computed(() => (info.ceilingHz && info.ceilingHz > 0 ? info.ceilingHz : null));
 
 /**
- * The mode budget, as a whole number of resonators.
- *
- * The engine's own text carries a decimal because the plain value genuinely
- * has one — an intermediate knob position is 23.7 modes and the engine rounds
- * it to 24 — but a count printed as `24.0` reads as a precision this control
- * does not have. Rounded here rather than in the parameter, because both ways
- * of making the plain value integral snap a preset asking for 1,024 modes onto
- * 1,021.
- */
-const modeText = computed(() => (r.modes ? String(Math.round(r.modes.plain)) : null));
-
-/**
  * How many partials the object has — and whether that is a total or a floor.
  *
  * The engine bounds its own search at a million candidates, so a count sitting
@@ -112,12 +100,23 @@ const hasCeiling = computed(() => info.declares('ceiling_hz'));
       </div>
     </div>
 
+    <!--
+      **It prints `1024`, not `1024.0`, and the page does not do that.** A count
+      of resonators has no tenths, and for a while this knob's text was rounded
+      here — which worked and was a second copy of one decision in a second
+      language. The manifest carries a `decimals` hint now and `mode_budget`
+      declares it, so the engine's own formatter is the single authority and
+      this is an ordinary knob again. The fraction it used to show was genuine:
+      an intermediate position really is 23.7 modes. What could not be done was
+      make the *plain value* integral — both engine-side attempts snapped a
+      preset asking for 1,024 modes onto 1,021, because `steps` quantises before
+      the log taper is applied over it.
+    -->
     <ResKnob
       v-if="r.modes"
       :p="r.modes"
       label="Modes"
       :size="38"
-      :text="modeText"
       :off="inactive('mode_budget', object, meta)"
       hint="resonators, not partials"
     />
