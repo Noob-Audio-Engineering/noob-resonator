@@ -53,7 +53,7 @@ jobs:
       # library compiles or the plug-in ships with no interface.
       - name: Build the page
         working-directory: web
-        run: npm ci && npm run build
+        run: npm install --no-package-lock && npm run build
 
       # nih-plug's own bundler rather than a hand-made layout. On Windows the
       # difference is cosmetic; on macOS a `.vst3` is a real bundle with an
