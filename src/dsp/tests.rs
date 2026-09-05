@@ -2439,6 +2439,69 @@ fn a_slot_note_recalls_a_stored_chord_and_a_played_note_replaces_it() {
 }
 
 #[test]
+fn a_voiced_air_column_claims_no_single_length() {
+    // A rank of six columns has six lengths, and `column_m` is one field.
+    // Publishing voice one's and labelling it would put "air column 85.0 cm
+    // (voice 1 of 3)" on the face, which is a number in the right place
+    // describing something other than what a reader expects — the failure
+    // this contract's NaN rule exists to prevent. So above one voice these
+    // three go blank, and at one voice they are exactly what they always
+    // were.
+    for object in [Object::Pipe, Object::Tube] {
+        let ix = Object::ALL.iter().position(|o| *o == object).unwrap();
+        let one = Settings {
+            object: ix,
+            tune_hz: 110.0,
+            voices: 1,
+            ..Settings::default()
+        };
+        let many = Settings { voices: 3, ..one };
+        let settle = |set: &Settings| {
+            let mut e = Resonator::new(SR);
+            e.configure(set);
+            let mut l = vec![0.0f32; bank::BLOCK];
+            let mut r = vec![0.0f32; bank::BLOCK];
+            for _ in 0..400 {
+                e.process(&mut l, &mut r);
+            }
+            e.info_frame()
+        };
+        let a = settle(&one);
+        for (k, name) in [(6usize, "column_m"), (7, "loop_ms")] {
+            assert!(
+                a[k].is_finite() && a[k] > 0.0,
+                "{object:?} at one voice publishes {} for {name}",
+                a[k]
+            );
+        }
+        // `open_hz` is finite rather than positive: a stopped pipe's far end
+        // has no opening, and **that zero is a measurement** rather than an
+        // uncomputed field. It is the distinction the NaN rule turns on, and
+        // asserting "> 0" here would have been the test misreading it.
+        assert!(
+            a[8].is_finite(),
+            "{object:?} at one voice publishes {} for open_hz",
+            a[8]
+        );
+        let b = settle(&many);
+        for (k, name) in [(6usize, "column_m"), (7, "loop_ms"), (8, "open_hz")] {
+            assert!(
+                b[k].is_nan(),
+                "{object:?} at three voices publishes {} for {name}, which is one rank's length \
+                 standing for six",
+                b[k]
+            );
+        }
+        // And the fields that *are* per-voice still say something, so this is
+        // a refusal to answer one question rather than a loss of the readout.
+        assert!(
+            b[13].is_finite() && b[14].is_finite() && b[15].is_finite(),
+            "{object:?}: the per-voice counts went blank too"
+        );
+    }
+}
+
+#[test]
 fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
     // Found live by the panel agent, driving every control to both ends: a
     // string at negative Inharm published 18,446,744,073,709,551,615

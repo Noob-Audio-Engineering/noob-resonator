@@ -18,9 +18,10 @@
  */
 import { onBeforeUnmount, onMounted } from 'vue';
 import { hzText, ui, useObject, useRes } from '../composables/useResonator.js';
-import { noteName, useChords } from '../composables/useChords.js';
+import { noteName, useChords, useSlots } from '../composables/useChords.js';
 
 const chords = useChords();
+const slots = useSlots();
 const object = useObject();
 const r = useRes();
 
@@ -56,6 +57,58 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
     </header>
 
     <div class="browse__scroll">
+      <!--
+        Six positions holding a chord each, so a voicing you built by hand is
+        one click away again. They are the page's, in the same store as the mode
+        table and the user presets, so they travel inside a saved project.
+
+        **A slot holds the same shape as a published chord** — the voices and
+        their semitones — which is why one row draws either, and why recalling
+        one is the same write as picking Major rather than a second route to the
+        same place.
+      -->
+      <section v-if="chords.has" class="browse__group">
+        <div class="browse__family">
+          <div class="browse__familytext">
+            <span class="browse__familyname">Your six</span>
+            <span class="browse__familynote">store what is sounding, recall it by position</span>
+          </div>
+        </div>
+        <div class="slots">
+          <div
+            v-for="e in slots.slots"
+            :key="e.i"
+            class="slot"
+            :class="{ on: slots.matching && slots.matching.i === e.i, empty: e.empty }"
+            :data-slot="e.i"
+          >
+            <button
+              class="slot__pick"
+              type="button"
+              :disabled="e.empty"
+              :title="e.empty ? 'Nothing stored here yet' : `Tune the voices to ${e.name}`"
+              @click="slots.recall(e)"
+            >
+              <span class="slot__n">{{ e.i + 1 }}</span>
+              <span class="slot__body">
+                <span class="slot__name">{{ e.empty ? 'empty' : e.name }}</span>
+                <span v-if="!e.empty" class="slot__semis tabular">
+                  {{ e.semis.map((x) => (x > 0 ? `+${x}` : x)).join('  ') }}
+                </span>
+              </span>
+            </button>
+            <span class="slot__tools">
+              <button class="key" type="button" title="Store what is sounding here" @click="slots.store(e.i, `Slot ${e.i + 1}`)">
+                Store
+              </button>
+              <button v-if="!e.empty" class="key" type="button" title="Empty this position" @click="slots.clear(e.i)">
+                Clear
+              </button>
+            </span>
+          </div>
+        </div>
+      </section>
+
       <p v-if="!chords.has" class="browse__empty">
         This build publishes no chords, so there is nothing to choose from. The voice pitches are still
         yours to set by hand on the deck.
@@ -127,4 +180,34 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 .chord__semis i { font-style: normal; }
 .chord__semis em { font-style: normal; color: var(--res-faint); margin-left: 3px; }
 .browse__foot { margin: 10px 2px 0; font-size: 11px; color: var(--res-faint); max-width: 70ch; }
+
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgb(255 255 255 / 0.02);
+  border: 1px solid rgb(255 255 255 / 0.07);
+  border-radius: 3px;
+}
+.slot.on { border-color: var(--res-brass); background: rgb(255 255 255 / 0.06); }
+.slot.empty { opacity: 0.62; }
+.slot__pick { display: flex; align-items: center; gap: 7px; flex: 1; text-align: left; color: inherit; cursor: pointer; }
+.slot__pick:disabled { cursor: default; }
+.slot__n {
+  font-size: 10px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.07);
+  color: var(--res-dim);
+}
+.slot.on .slot__n { background: var(--res-brass); color: #14171b; }
+.slot__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.slot__name { font-size: 12px; }
+.slot__semis { font-size: 9.5px; color: var(--res-faint); }
+.slot__tools { display: flex; gap: 3px; }
 </style>

@@ -46,8 +46,19 @@ const chords = useChords();
  * this file's: the two-dimensional objects do not offer them yet, and `uses`
  * is what says so.
  */
+/**
+ * Whether this object has voices at all, which is the engine's call.
+ *
+ * **Separate from whether there is anything to say about them.** Tying the way
+ * in to the statement made the key vanish at one voice along with the words,
+ * and then the deck was the only route to the chord menu — a feature you can
+ * only reach if you already know it is there. The bar stays silent at one
+ * voice; the door stays open.
+ */
+const canVoice = computed(() => chords.has && !inactive('voices', object.value, meta.value));
+
 const voicing = computed(() => {
-  if (!chords.has || inactive('voices', object.value, meta.value)) return null;
+  if (!canVoice.value) return null;
   const n = chords.sounding;
   // **Nothing at one voice.** One voice is the object at its own pitch, which
   // is what it was before voices existed — and a line reading "one voice" is
@@ -117,7 +128,7 @@ const caveat = computed(() => {
       </div>
 
       <button class="key pick__change" type="button" @click="ui.browsing = true">Change resonator</button>
-      <button v-if="voicing" class="key pick__tune" type="button" @click="ui.chords = true">Tune the voices</button>
+      <button v-if="canVoice" class="key pick__tune" type="button" @click="ui.chords = true">Tune the voices</button>
 
       <div class="pick__say">
         <p class="pick__blurb">{{ object.blurb }}</p>

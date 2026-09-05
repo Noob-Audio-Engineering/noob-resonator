@@ -645,20 +645,26 @@ impl Resonator {
             },
             if self.set.limiter { self.limit_db } else { na },
             if guide { na } else { self.set.inharm_b() },
-            // The root voice's column, which is the one the object is
-            // tuned to; a voiced rank has six lengths and one number cannot
-            // be all of them.
-            if guide {
+            // **NaN above one voice, rather than the root voice's length.**
+            // A voiced rank has six lengths and one field cannot be all of
+            // them. Publishing voice one's and labelling it was the other
+            // option, and the label that would have to be written is "air
+            // column 85.0 cm (voice 1 of 3)" — worse than not claiming a
+            // length, because a number in the right place describing
+            // something other than what a reader expects is the failure this
+            // contract's NaN rule exists to prevent. A per-voice length can
+            // be appended later if anyone asks for one.
+            if guide && voices == 1 {
                 self.guides[0][0].column_m()
             } else {
                 na
             },
-            if guide {
+            if guide && voices == 1 {
                 self.guides[0][0].loop_ms()
             } else {
                 na
             },
-            if guide {
+            if guide && voices == 1 {
                 self.guides[0][0].open_hz()
             } else {
                 na

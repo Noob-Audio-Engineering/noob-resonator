@@ -37,7 +37,7 @@
  * the parameters, because it is derived from them.
  */
 import { computed, reactive } from 'vue';
-import { getClient, hasParam, useNoobVstWebguiFramework, useParam } from './useResonator.js';
+import { getClient, hasParam, useNoobVstWebguiFramework, useParam, useStoredRef } from './useResonator.js';
 
 /** How close two semitone values count as the same. They are integers on the wire; this is belt and braces. */
 const EPS = 1e-6;
@@ -164,4 +164,112 @@ export function noteName(rootHz, semis) {
   // not tuned to a semitone — which is why it rounds rather than assuming.
   const midi = Math.round(69 + 12 * Math.log2(rootHz / 440) + semis);
   return `${NOTES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+// ---------------------------------------------------------------------------
+// The six slots
+// ---------------------------------------------------------------------------
+
+/** How many slots there are. Six, matching the voices, so a slot is a whole chord. */
+export const SLOT_COUNT = 6;
+
+/** The UI store key the slots live under, beside the mode table and the user presets. */
+export const SLOTS_KEY = 'chord_slots';
+
+/**
+ * Six remembered chords, recallable from a panel position.
+ *
+ * **A slot is a user-defined chord, so it takes the shape the engine already
+ * publishes for one** — `{ name, voices, semis }`, exactly the fields of a
+ * `meta.chords` entry minus the group. That is deliberate rather than
+ * convenient: inventing a second shape for the same thing is how two halves of
+ * a product come to disagree about what a chord is, and it means one renderer
+ * draws the published chords and the remembered ones without caring which it
+ * has.
+ *
+ * **Storage here, recall from MIDI at the engine.** The lead's split, and it
+ * follows from what each side can see: a slot has to survive a saved project,
+ * which the UI store does, and only the engine sees a note arrive. So the page
+ * writes the slots and the engine reads them the way it already reads the mode
+ * table — through the store, not through a message a plug-in has no loop to
+ * pump.
+ *
+ * **Recalling one is the same write as picking a chord**, through the ordinary
+ * edit path, so the host records real gestures and undo reaches them. There is
+ * no state in which a slot could tune the voices *instead* of the parameters
+ * doing it.
+ */
+export function useSlots() {
+  const stored = useStoredRef(SLOTS_KEY, null);
+  const chords = useChords();
+
+  /** Always six entries, so a position is a position whatever the store holds. */
+  const slots = computed(() => {
+    const raw = Array.isArray(stored.value) ? stored.value : [];
+    return Array.from({ length: SLOT_COUNT }, (_, i) => {
+      const e = raw[i];
+      if (!e || !Array.isArray(e.semis) || !e.semis.length) return { i, empty: true };
+      return {
+        i,
+        empty: false,
+        name: String(e.name || `Slot ${i + 1}`),
+        voices: Number.isFinite(e.voices) ? Math.round(e.voices) : e.semis.length,
+        semis: e.semis.map(Number),
+      };
+    });
+  });
+
+  const write = (list) => {
+    stored.value = list.map((e) => (e.empty ? null : { name: e.name, voices: e.voices, semis: e.semis }));
+  };
+
+  return reactive({
+    slots,
+    /**
+     * Which slot the voices are currently at, or `null`.
+     *
+     * Derived rather than remembered, exactly as the chord menu is: nudge a
+     * voice after recalling slot 2 and it stops being slot 2 immediately, with
+     * no state to go stale and nothing to disagree with the parameters.
+     */
+    matching: computed(() => {
+      const now = chords.live;
+      if (!now.length) return null;
+      return (
+        slots.value.find(
+          (e) => !e.empty && e.voices === now.length && e.semis.every((x, k) => Math.abs(x - now[k]) < EPS),
+        ) || null
+      );
+    }),
+
+    /** Put what is sounding into a position. */
+    store(i, name) {
+      const now = chords.live;
+      if (!now.length) return;
+      const list = slots.value.map((e) => ({ ...e }));
+      list[i] = { i, empty: false, name: String(name || `Slot ${i + 1}`), voices: now.length, semis: [...now] };
+      write(list);
+    },
+
+    /** Tune the voices to a position, through the same path a chord uses. */
+    recall(e) {
+      if (!e || e.empty) return;
+      chords.apply({ semis: e.semis, voices: e.voices });
+    },
+
+    clear(i) {
+      const list = slots.value.map((x) => ({ ...x }));
+      list[i] = { i: i, empty: true };
+      write(list);
+    },
+
+    rename(i, name) {
+      const clean = String(name || '').trim();
+      if (!clean) return;
+      const list = slots.value.map((x) => ({ ...x }));
+      if (list[i].empty) return;
+      list[i] = { ...list[i], name: clean };
+      write(list);
+    },
+  });
 }
