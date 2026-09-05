@@ -560,6 +560,19 @@ export function useInfo() {
     }),
     used: count('modes_used'),
     available: count('modes_available'),
+    /**
+     * How many partials one voice has, or `null`.
+     *
+     * **This is what stops a starved voice lying.** The published set is the
+     * loudest sixty-four across the whole table, so an ordinary chord voicing
+     * leaves the quiet voices with one bar each — and one bar reads as *this
+     * voice has one partial* rather than *you are seeing one of sixty-four*.
+     * Counting what is drawn is easy; only the engine can say what is missing.
+     *
+     * NaN for a voice that is not sounding, which the count reader turns into
+     * an absence rather than a zero.
+     */
+    voiceAvailable: (v) => countAt(frame.value, layout, 'voice_available', v),
     crossoverHz: at('crossover_hz'),
     columnM: at('column_m'),
     loopMs: at('loop_ms'),

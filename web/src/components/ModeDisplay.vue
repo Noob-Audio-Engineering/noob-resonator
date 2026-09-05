@@ -158,6 +158,61 @@ const guide = computed(() => object.value.engine === 'waveguide');
  */
 const offersVoices = computed(() => !inactive('voices', object.value, meta.value));
 const voiced = computed(() => offersVoices.value && modes.list.some((p) => (p.j || 0) > 0));
+
+/**
+ * Which voice the display is attending to, or `null` for all of them.
+ *
+ * **Focus rather than colour, and dimmed rather than hidden.** Six hues would
+ * collide with a palette that already means something — a held partial and a
+ * dead one are drawn by opacity, so a low voice would have read as *quiet*
+ * rather than *first*. Of the schemes tried against real series data, focus was
+ * the only one that stayed legible where the voices' partials interleave, and
+ * it costs no information because nothing is removed. The question a reader
+ * actually asks is *which of these are voice three's*, and that is one voice at
+ * a time.
+ */
+const focusVoice = ref(null);
+
+/**
+ * Each sounding voice: where its lowest drawn partial sits, how many it has on
+ * screen, and how many it has.
+ *
+ * The first two are read off the drawn rows. **The third can only come from the
+ * engine** — counting what is drawn is easy and only the engine knows what was
+ * left out.
+ */
+const voices = computed(() => {
+  if (!voiced.value) return [];
+  const by = new Map();
+  for (const b of bars.value) {
+    const v = b.j || 0;
+    const cur = by.get(v);
+    if (!cur) by.set(v, { v, lowest: b, drawn: 1 });
+    else {
+      cur.drawn++;
+      if (b.hz < cur.lowest.hz) cur.lowest = b;
+    }
+  }
+  return [...by.values()]
+    .sort((a, b) => a.lowest.hz - b.lowest.hz)
+    .map((e) => ({ ...e, available: info.voiceAvailable(e.v) }));
+});
+
+/**
+ * Voices showing far less than they have.
+ *
+ * The published set is the loudest sixty-four across the whole table, so an
+ * ordinary voicing — six decibels between the voices — leaves the quiet ones
+ * with a single bar. The engine keeps each sounding voice's loudest partial so
+ * that none disappears; **this is the other half of that rule**, because one bar
+ * drawn as an ordinary partial says *this voice has one* rather than *you are
+ * seeing one of sixty-four*.
+ */
+const starved = computed(() =>
+  voices.value.filter(
+    (e) => e.available != null && e.drawn < Math.min(4, e.available) && e.drawn < e.available / 4,
+  ),
+);
 const f0 = computed(() => Math.max(1e-6, fundamental.value.hz));
 const nyquist = computed(() => (response.has ? response.range[1] : 24000));
 
@@ -311,6 +366,8 @@ const bars = computed(() => {
       dead: top <= DB_FLOOR + 0.5,
       /** Set in the second pass below, which needs the whole list to see a stack. */
       held: false,
+      /** Dimmed because another voice is in focus. Dimmed, never removed. */
+      away: false,
       /** The engine says this partial started higher, so a node took the difference. */
       lost: p.bareDb != null && top < p.bareDb - 1.2,
       /** Above the crossover the ear fuses them, so they are drawn as a band. */
@@ -318,6 +375,9 @@ const bars = computed(() => {
     };
   });
   for (const b of heldOf(list)) b.held = true;
+  if (focusVoice.value != null) {
+    for (const b of list) b.away = (b.j || 0) !== focusVoice.value;
+  }
   return list;
 });
 /** The stack, as the display draws and describes it. A plain read of `bars`. */
@@ -674,16 +734,32 @@ const engineDisagrees = computed(() => {
  * which is its own category and deserves its own sentence.
  */
 const readCarefully = computed(() => {
+  const out = [];
+  const thin = starved.value;
+  if (thin.length) {
+    const which =
+      thin.length === voices.value.length
+        ? 'every voice'
+        : `voice${thin.length === 1 ? '' : 's'} ${thin.map((e) => e.v + 1).join(', ')}`;
+    const same = thin.every((e) => e.drawn === thin[0].drawn && e.available === thin[0].available);
+    const each = same
+      ? `${thin[0].drawn} partial${thin[0].drawn === 1 ? '' : 's'} of ${thin[0].available}`
+      : thin.map((e) => `${e.drawn} of ${e.available}`).join(', ');
+    out.push(
+      `${which} ${thin.length === 1 ? 'is' : 'are'} showing ${each} — the display carries the loudest ` +
+        'partials across the whole table, so a quiet voice keeps only its loudest',
+    );
+  }
   const st = ceilingStack.value;
-  if (!st) return [];
+  if (!st) return out;
   const together = cut.value?.withStack;
-  return [
+  return out.concat([
     `${st.count} partials are sharing one frequency at ${hzText(st.hz)}` +
       (st.ceiling ? `, just under the ${hzText(st.ceiling)} ceiling` : '') +
       ' — the engine holds a partial there rather than letting it alias, so those are drawn where they' +
       ' sound rather than where the object puts them' +
       (together ? ', and that is the same line the bank stops at' : ''),
-  ];
+  ]);
 });
 
 const notApplicable = computed(() => {
@@ -887,7 +963,7 @@ const tip = (p) =>
           <line
             v-for="p in bars"
             :key="`h${p.key}`"
-            :class="{ edited: p.edited, picked: isPicked(p), guide, held: p.held }"
+            :class="{ edited: p.edited, picked: isPicked(p), guide, held: p.held, away: p.away }"
             :x1="p.x"
             :y1="geom.levelBottom - 5"
             :x2="p.x"
@@ -913,6 +989,30 @@ const tip = (p) =>
           be a false picture, one by omission and one by making twenty look
           like one.
         -->
+        <!--
+          One marker per voice at its lowest drawn partial, always on: it names
+          which pitches are sounding without claiming to attribute every bar.
+          Clicking one attends to that voice and dims the others.
+        -->
+        <g v-if="voiced" class="g-voices">
+          <g v-for="e in voices" :key="`v${e.v}`" :class="{ on: focusVoice === e.v }">
+            <line
+              :x1="e.lowest.x"
+              :y1="geom.levelTop"
+              :x2="e.lowest.x"
+              :y2="geom.levelBottom"
+              @click="focusVoice = focusVoice === e.v ? null : e.v"
+            >
+              <title>
+                Voice {{ e.v + 1 }} · lowest at {{ hzText(e.lowest.hz) }} ·
+                {{ e.available == null ? `${e.drawn} drawn` : `${e.drawn} of ${e.available} drawn` }} —
+                click to {{ focusVoice === e.v ? 'show them all' : 'see only this one' }}
+              </title>
+            </line>
+            <text :x="e.lowest.x + 3" :y="geom.levelTop + 9">{{ e.v + 1 }}</text>
+          </g>
+        </g>
+
         <g v-if="ceilingStack" class="g-held">
           <line :x1="ceilingStack.x" :y1="geom.levelTop" :x2="ceilingStack.x" :y2="geom.levelBottom" />
           <text :x="ceilingStack.tx" :y="geom.levelBottom - 4" :text-anchor="ceilingStack.anchor">
@@ -1039,6 +1139,18 @@ svg.is-drawing .g-bar rect, svg.is-drawing .g-handles line { cursor: crosshair; 
  * what they are — so the stack is dashed, counted, and the bars themselves say
  * they are held rather than drawing as ordinary partials.
  */
+/*
+ * One marker per voice, at its lowest drawn partial. In the brass the panel
+ * uses for a live setting, and clickable, because the question a reader asks is
+ * about one voice at a time.
+ */
+.g-voices line { stroke: var(--res-brass); stroke-width: 1; opacity: 0.5; cursor: pointer; }
+.g-voices g.on line { opacity: 1; stroke-width: 1.6; }
+.g-voices text { font-size: 9px; fill: var(--res-brass); opacity: 0.65; pointer-events: none; }
+.g-voices g.on text { opacity: 1; font-weight: 600; }
+/* Another voice has focus. Dimmed, never removed: nothing is hidden. */
+.g-bars line.away, .g-handles line.away { opacity: 0.16; }
+
 .g-held line { stroke: var(--res-guide); stroke-width: 1.2; stroke-dasharray: 2 3; }
 .g-held text { font-size: 9px; fill: var(--res-guide); }
 .g-bars line.held, .g-handles line.held { stroke-dasharray: 2 2; opacity: 0.5; }
