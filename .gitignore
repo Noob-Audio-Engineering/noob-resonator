@@ -1,0 +1,16 @@
+# Rust
+/target
+
+# Node
+node_modules/
+web/dist/
+*.log
+npm-debug.log*
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+# Per-agent build trees, so parallel builds do not fight over cargo's lock.
+/target-*

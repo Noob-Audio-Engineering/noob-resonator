@@ -1,0 +1,35 @@
+{
+  "name": "noob-resonator-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "author": "Ely Erin Fox",
+  "description": "Noob Resonator · a modal and waveguide resonator's front panel: a Vue 3 + Tailwind SPA rendered inside the plug-in's native web view, talking to the Rust DSP over noob-vst-webgui-framework.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "previews": "node tools/gen-previews.mjs",
+    "test": "node --test test/design-physics.test.js"
+  },
+  "dependencies": {
+    "@noob-audio-engineering/noob-vst-webgui-framework": "github:Noob-Audio-Engineering/noob-vst-webgui-framework",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "tailwindcss": "^4.1.0",
+    "vite": "^7.0.0"
+  },
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/Noob-Audio-Engineering/noob-resonator#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Noob-Audio-Engineering/noob-resonator.git",
+    "directory": "web"
+  },
+  "bugs": {
+    "url": "https://github.com/Noob-Audio-Engineering/noob-resonator/issues"
+  }
+}

@@ -1,0 +1,564 @@
+@import 'tailwindcss';
+
+/*
+ * Noob Resonator's face. Every colour, every proportion and every control
+ * surface on this panel is in this file; the framework supplies behaviour and
+ * nothing else.
+ *
+ * **The device is a modal analysis rig.** There is no hardware to draw — an
+ * object that rings is a wine glass, a bar, a length of pipe, and none of
+ * those has a front panel — so what the case borrows from is the bench you
+ * would put one on to find out what it does: a dark instrument, a graphite
+ * plate, and one large display that answers the only question worth asking.
+ *
+ * Three accents, one meaning each, and they never swap:
+ *
+ *   teal   the mode bank   a solid object, vibrating in its own normal modes
+ *   amber  the waveguide   an air column, where the object is only a boundary
+ *   rose   what was lost   energy a node took out, at the strike or the pickup
+ *
+ * Brass is the things you turn, and it carries no meaning beyond that. The
+ * warning yellow appears in exactly one place: the stamp on the level axis,
+ * which says that the heights on this display are modelled and the positions
+ * are not.
+ */
+
+:root {
+  --res-ground: #0b0e12;
+  --res-case: #151a21;
+  --res-plate: #1c222b;
+  --res-glass: #10151b;
+  --res-line: rgb(255 255 255 / 0.07);
+  --res-edge: rgb(255 255 255 / 0.14);
+  --res-ink: #dce3ec;
+  --res-dim: rgb(220 227 236 / 0.46);
+  --res-faint: rgb(220 227 236 / 0.22);
+
+  --res-modal: #5fd3c4;
+  --res-guide: #f0a63c;
+  --res-null: #e2607f;
+  --res-brass: #c9a463;
+  --res-warn: #f2c85b;
+
+  --res-gap: 9px;
+  --res-radius: 7px;
+  --knob-scale: 1;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  background: var(--res-ground);
+  color: var(--res-ink);
+  font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+ * The case
+ * ------------------------------------------------------------------------ */
+
+.res {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--res-gap);
+  padding: var(--res-gap);
+  background:
+    radial-gradient(120% 90% at 50% -20%, rgb(255 255 255 / 0.035), transparent 60%),
+    var(--res-ground);
+}
+.res--wait { align-items: center; justify-content: center; }
+.res__wait { color: var(--res-dim); letter-spacing: 0.04em; }
+.res__body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--res-gap); }
+
+.plate {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 42%), var(--res-case);
+  border: 1px solid var(--res-line);
+  border-radius: var(--res-radius);
+}
+
+.cap {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--res-dim);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+ * Top bar
+ * ------------------------------------------------------------------------ */
+
+.bar { display: flex; align-items: center; gap: 12px; padding: 7px 11px; flex: 0 0 auto; }
+.bar__brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.bar__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgb(255 255 255 / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.5);
+  align-self: center; flex: 0 0 auto;
+}
+.bar__dot.on { background: var(--res-modal); box-shadow: 0 0 7px color-mix(in srgb, var(--res-modal) 60%, transparent); }
+.bar__name { font-weight: 650; letter-spacing: 0.07em; font-size: 13px; }
+.bar__sub { font-size: 10.5px; color: var(--res-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar__object {
+  margin-left: 4px; font-size: 11px; letter-spacing: 0.04em;
+  color: var(--res-ink); padding: 3px 7px; border-radius: 4px;
+  background: var(--res-plate); border: 1px solid var(--res-line);
+}
+.bar__tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.bar__state { font-size: 10px; letter-spacing: 0.08em; color: var(--res-dim); text-transform: uppercase; }
+.bar__state.design { color: var(--res-warn); }
+
+.key {
+  font: inherit; font-size: 10.5px; line-height: 1;
+  padding: 5px 8px; border-radius: 4px;
+  border: 1px solid var(--res-line);
+  background: var(--res-plate);
+  color: var(--res-dim);
+  cursor: pointer;
+}
+.key:hover:not(:disabled) { color: var(--res-ink); border-color: var(--res-edge); }
+.key:disabled { opacity: 0.34; cursor: default; }
+.key.on { color: var(--res-ground); background: var(--res-brass); border-color: var(--res-brass); }
+
+/* --------------------------------------------------------------------------
+ * What is loaded, and the way in to changing it
+ * ------------------------------------------------------------------------ */
+
+.pick { flex: 0 0 auto; padding: 7px 11px 8px; }
+.pick__row { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
+.pick__who { display: flex; align-items: baseline; gap: 8px; flex: 0 0 auto; }
+.pick__engine { display: inline-flex; align-items: center; gap: 5px; }
+.pick__engine .dotmark { width: 6px; height: 6px; border-radius: 1.5px; }
+.pick__engine.modal { color: var(--res-modal); }
+.pick__engine.modal .dotmark { background: var(--res-modal); }
+.pick__engine.waveguide { color: var(--res-guide); }
+.pick__engine.waveguide .dotmark { background: var(--res-guide); }
+.pick__name { font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
+.pick__short { font-size: 11px; color: var(--res-dim); }
+/* The far end is not where the name says it is: said out loud rather than by flipping the name. */
+.pick__state {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--res-warn); padding: 2px 6px; border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--res-warn) 34%, transparent);
+}
+.pick__change { flex: 0 0 auto; }
+
+.pick__say { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pick__blurb { margin: 0; font-size: 11.5px; color: var(--res-ink); }
+.pick__src { margin: 0; font-size: 10px; color: var(--res-dim); }
+.pick__src b { font-weight: 600; color: var(--res-faint); letter-spacing: 0.06em; text-transform: uppercase; font-size: 9px; }
+.pick__src .target { color: var(--res-warn); }
+/* What the cited equation does not cover. Same weight as the citation, because it is part of it. */
+.pick__caveat { color: var(--res-warn); opacity: 0.72; }
+
+/* --------------------------------------------------------------------------
+ * Select: which partials survive
+ *
+ * The headline, and never behind a tab, for the same reason the sibling
+ * plug-in's alias readout is not: it is the whole argument for the way this
+ * engine is built.
+ * ------------------------------------------------------------------------ */
+
+.sel { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 7px 11px; flex-wrap: wrap; }
+.sel__left { display: flex; flex-direction: column; gap: 5px; flex: 0 0 auto; }
+.sel__cap { display: flex; align-items: baseline; gap: 7px; }
+.sel__cap .why { font-size: 9.5px; color: var(--res-faint); text-transform: none; letter-spacing: 0; }
+.sel__read { display: flex; flex-direction: column; gap: 1px; flex: 0 0 auto; font-size: 10.5px; }
+.sel__row { display: flex; gap: 8px; }
+.sel__k { color: var(--res-dim); min-width: 116px; }
+.sel__v { color: var(--res-ink); font-weight: 600; }
+.sel__v i { font-style: normal; font-weight: 400; color: var(--res-dim); }
+.sel__row.wall .sel__v { color: var(--res-warn); }
+.sel__say { flex: 1 1 240px; min-width: 0; margin: 0; font-size: 11px; color: var(--res-dim); }
+.sel__say b { color: var(--res-warn); font-weight: 600; }
+
+/* The framework's Segmented ships unstyled; these are this panel's lit keys. */
+.keys { display: flex; gap: 3px; }
+.keys .noob-vst-webgui-framework-segment {
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 6px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--res-line);
+  background: var(--res-plate);
+  color: var(--res-dim);
+  white-space: nowrap;
+}
+.keys .noob-vst-webgui-framework-segment:hover { color: var(--res-ink); border-color: var(--res-edge); }
+.keys .noob-vst-webgui-framework-segment.is-on {
+  color: var(--res-ground);
+  background: var(--res-brass);
+  border-color: var(--res-brass);
+  font-weight: 600;
+}
+.keys--sel .noob-vst-webgui-framework-segment { padding: 7px 13px; font-size: 12px; }
+.keys--tiny .noob-vst-webgui-framework-segment { padding: 3px 5px; font-size: 9px; }
+/* A lit key: the framework's Toggle in button form, dressed as this panel's. */
+.keys--lamp button, button.keys--lamp {
+  font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+  padding: 5px 9px; border-radius: 4px;
+  border: 1px solid var(--res-line); background: var(--res-plate); color: var(--res-dim);
+}
+.keys--lamp button[aria-pressed='true'], button.keys--lamp[aria-pressed='true'],
+.keys--lamp button.is-on, button.keys--lamp.is-on {
+  color: var(--res-ground); background: var(--res-brass); border-color: var(--res-brass); font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+ * The browse view
+ *
+ * One object per row, grouped by engine. It replaces the panel while it is
+ * up; the top bar stays, so it is always clear what is loaded.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * A layer over the panel, not a replacement for it. The panel goes on
+ * showing through, dimmed, so the settings you are choosing for are still
+ * there — and so pressing the button never reads as "everything vanished".
+ */
+.browse {
+  position: absolute;
+  left: var(--res-gap); right: var(--res-gap); bottom: var(--res-gap);
+  top: calc(var(--res-gap) + 39px + var(--res-gap));
+  z-index: 8;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--res-radius);
+  border: 1px solid var(--res-edge);
+  background: color-mix(in srgb, var(--res-ground) 88%, transparent);
+  backdrop-filter: blur(6px) saturate(0.7);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.6);
+}
+.browse__head { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 16px; padding: 0 2px; }
+.browse__title { margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: 0.06em; }
+.browse__lede { margin: 0; max-width: 92ch; font-size: 12.5px; line-height: 1.45; color: var(--res-dim); }
+/* The way back out of a whole-page view: a real button, not a dim word. */
+.browse__close {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 15px; font-size: 12.5px; font-weight: 600;
+  color: var(--res-ground); background: var(--res-brass); border-color: var(--res-brass);
+}
+.browse__close:hover { filter: brightness(1.12); }
+.browse__esc {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 2px 5px; border-radius: 3px;
+  background: color-mix(in srgb, var(--res-ground) 22%, transparent);
+}
+
+.browse__scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+.browse__family { display: flex; align-items: center; gap: 14px; margin-bottom: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--res-line); }
+.browse__familytext { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.browse__family.modal { color: var(--res-modal); }
+.browse__family.waveguide { color: var(--res-guide); }
+.browse__familyname { font-size: 11px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; white-space: nowrap; }
+.browse__family.modal .browse__familyname { color: var(--res-modal); }
+.browse__family.waveguide .browse__familyname { color: var(--res-guide); }
+.browse__familynote { font-size: 12px; color: var(--res-dim); }
+
+/*
+ * One per row: the view is then the same shape all the way down, so the
+ * preview, the name and the description sit in the same place on every entry
+ * and the eye does not have to re-find them between engines.
+ */
+.browse__list { display: grid; grid-template-columns: 1fr; gap: 9px; }
+.browse__card {
+  display: grid;
+  grid-template-columns: minmax(150px, 240px) 1fr;
+  gap: 16px; align-items: center; text-align: left;
+  padding: 11px 14px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--res-line);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 42%), var(--res-case);
+  color: inherit; font: inherit;
+}
+.browse__card:hover { border-color: var(--res-edge); background: var(--res-plate); }
+.browse__card:focus-visible { outline: 2px solid var(--res-brass); outline-offset: 2px; }
+.browse__card.modal.on { border-color: color-mix(in srgb, var(--res-modal) 60%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--res-modal) 26%, transparent); }
+.browse__card.waveguide.on { border-color: color-mix(in srgb, var(--res-guide) 60%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--res-guide) 26%, transparent); }
+
+.browse__preview { display: block; height: 54px; border-radius: 4px; background: var(--res-glass); border: 1px solid var(--res-line); overflow: hidden; }
+.browse__meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.browse__name { display: flex; align-items: baseline; gap: 9px; font-size: 17px; font-weight: 650; flex-wrap: wrap; }
+.browse__sub { font-size: 12px; font-weight: 400; color: var(--res-dim); }
+.browse__badge { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--res-brass); color: var(--res-ground); font-weight: 700; }
+.browse__blurb { font-size: 13px; line-height: 1.45; color: var(--res-ink); }
+.browse__uses { font-size: 12.5px; line-height: 1.45; color: var(--res-dim); }
+.browse__uses b { color: var(--res-ink); font-weight: 650; }
+.browse__src { font-size: 10px; color: var(--res-faint); }
+.browse__src b { letter-spacing: 0.06em; text-transform: uppercase; font-size: 9px; font-weight: 600; }
+.browse__src .target { color: var(--res-warn); }
+
+@media (max-width: 1000px) {
+  .browse__card { grid-template-columns: minmax(110px, 170px) 1fr; gap: 12px; padding: 9px 11px; }
+  .browse__name { font-size: 15px; }
+  .browse__blurb { font-size: 12px; }
+  .browse__uses { font-size: 11.5px; }
+}
+
+/* --------------------------------------------------------------------------
+ * The display
+ * ------------------------------------------------------------------------ */
+
+.md { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 7px 10px; gap: 5px; }
+.md__head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.md__title { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
+.md__badge {
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px; border: 1px solid;
+}
+.md__badge.modal { color: var(--res-modal); border-color: color-mix(in srgb, var(--res-modal) 38%, transparent); }
+.md__badge.waveguide { color: var(--res-guide); border-color: color-mix(in srgb, var(--res-guide) 38%, transparent); }
+.md__facts { margin-left: auto; display: flex; gap: 14px; font-size: 10px; color: var(--res-dim); }
+.md__facts b { font-weight: 600; color: var(--res-ink); }
+
+.md__box {
+  flex: 1; min-height: 0; position: relative;
+  background: linear-gradient(180deg, #131920, var(--res-glass));
+  border: 1px solid var(--res-line);
+  border-radius: 5px;
+  overflow: hidden;
+  min-height: 90px;
+}
+.md__box svg { display: block; width: 100%; height: 100%; }
+
+/* Clear of the level axis's own gutter, so the 0 dB label is not behind it. */
+/* The engine is still filling the table; the picture is not final yet. */
+.md__settling {
+  position: absolute; top: 5px; left: 40px;
+  font-size: 8.5px; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--res-modal);
+  border: 1px solid color-mix(in srgb, var(--res-modal) 34%, transparent);
+  border-radius: 3px; padding: 2px 5px;
+  background: color-mix(in srgb, var(--res-modal) 8%, transparent);
+  pointer-events: none;
+}
+
+.md__stamp {
+  position: absolute; top: 5px; left: 40px;
+  font-size: 8.5px; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--res-warn);
+  border: 1px solid color-mix(in srgb, var(--res-warn) 34%, transparent);
+  border-radius: 3px; padding: 2px 5px;
+  background: color-mix(in srgb, var(--res-warn) 8%, transparent);
+  pointer-events: none;
+}
+
+/* No stream to draw: said plainly, in the middle of the space it would have filled. */
+.md__empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 0 24px; text-align: center; font-size: 11.5px; color: var(--res-dim); pointer-events: none;
+}
+.md__empty code { color: var(--res-ink); }
+
+.md__legend { display: flex; gap: 13px; flex-wrap: wrap; font-size: 10px; color: var(--res-dim); align-items: center; }
+.md__legend i { display: inline-block; width: 9px; height: 3px; border-radius: 1px; margin-right: 5px; vertical-align: middle; }
+.md__legend .k { display: inline-flex; align-items: center; white-space: nowrap; }
+.md__note { margin-left: auto; color: var(--res-faint); }
+/* What the display is short of, named per stream rather than left silent. */
+.md__prov { margin: 3px 0 0; font-size: 10px; color: var(--res-warn); opacity: 0.8; }
+
+/* --------------------------------------------------------------------------
+ * The deck
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The deck holds forty-one host parameters now, in six groups. At a window
+ * that cannot show them all it scrolls rather than pushing the display out:
+ * every control stays reachable, and the one plate that carries the argument
+ * keeps its floor. The scrollbar is the honest signal that there is more.
+ */
+.deck { flex: 0 0 auto; display: flex; gap: var(--res-gap); flex-wrap: wrap; max-height: 38vh; overflow-y: auto; }
+.deck__group {
+  flex: 1 1 auto; min-width: 0;
+  padding: 5px 8px 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.deck__head { display: flex; align-items: baseline; gap: 7px; }
+.deck__head .why { font-size: 9.5px; color: var(--res-faint); text-transform: none; letter-spacing: 0; }
+.deck__row { display: flex; gap: 2px; align-items: flex-start; }
+.deck__stack { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 92px; }
+.deck__stack.is-off { opacity: 0.3; pointer-events: none; }
+.deck__cap { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--res-dim); }
+.deck__hint { font-size: 8.5px; color: var(--res-faint); text-align: center; line-height: 1.25; }
+
+/*
+ * A knob is as wide as its dial or as wide as its name, whichever is more.
+ * The floor is what stops `OFF DECAY` from running into `DRY/WET` when the
+ * deck scales down, which is the failure a single-word label set would never
+ * have shown.
+ */
+.knob { display: flex; flex-direction: column; align-items: center; width: max(calc(var(--knob-size) + 11px), 50px); gap: 0; }
+.knob__box { width: var(--knob-size); height: var(--knob-size); }
+.knob__box svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.knob__dial:focus-visible { outline: 1px solid var(--res-brass); outline-offset: 2px; border-radius: 50%; }
+.knob__marks line { stroke: rgb(255 255 255 / 0.16); stroke-width: 1.4; }
+.knob__marks line.long { stroke: rgb(255 255 255 / 0.34); stroke-width: 1.8; }
+.knob__track { fill: none; stroke: rgb(255 255 255 / 0.1); stroke-width: 3; stroke-linecap: round; }
+.knob__value { fill: none; stroke: var(--res-brass); stroke-width: 3; stroke-linecap: round; }
+.knob__bezel { fill: #2a2620; stroke: color-mix(in srgb, var(--res-brass) 55%, #000); stroke-width: 1.2; }
+.knob__cap { fill: #191d23; }
+.knob__crown { fill: none; stroke: rgb(255 255 255 / 0.07); stroke-width: 1; }
+.knob__index { fill: var(--res-brass); }
+.knob__label { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--res-dim); white-space: nowrap; }
+.knob__value-text { font-size: 11px; color: var(--res-ink); white-space: nowrap; }
+.knob__hint {
+  font-size: 8.5px; color: var(--res-faint); text-align: center; line-height: 1.25;
+  /* Clamped so a long reason cannot change the height of the deck, and with
+     it the height of the display. The full sentence is on the control's
+     tooltip, so nothing is lost by cutting it here. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  height: 2.5em;
+}
+.knob.is-live .knob__value-text { color: var(--res-brass); }
+.knob.is-off { opacity: 0.3; }
+.knob.is-off .knob__value { stroke: rgb(255 255 255 / 0.2); }
+.knob.is-off .knob__index { fill: rgb(255 255 255 / 0.3); }
+
+/* --------------------------------------------------------------------------
+ * The mode editor
+ *
+ * Floats inside the plot, over the corner the series is least likely to be
+ * using, so opening it never moves the display it is editing.
+ * ------------------------------------------------------------------------ */
+
+.me {
+  position: absolute; right: 8px; bottom: 8px; z-index: 4;
+  width: min(310px, calc(100% - 52px));
+  padding: 8px 10px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--res-edge);
+  background: color-mix(in srgb, var(--res-case) 94%, transparent);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 0.55);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.me__head { display: flex; align-items: baseline; gap: 8px; }
+.me__title { font-size: 11.5px; font-weight: 650; }
+.me__at { font-size: 10px; color: var(--res-dim); }
+.me__x { margin-left: auto; }
+.me__row { display: grid; grid-template-columns: 34px 1fr 58px; align-items: center; gap: 7px; }
+.me__k { font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--res-dim); }
+.me__v { font-size: 10.5px; text-align: right; }
+.me__row input { width: 100%; accent-color: var(--res-brass); height: 14px; }
+.me__foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.me__note { font-size: 9px; color: var(--res-faint); margin-left: auto; }
+
+/* --------------------------------------------------------------------------
+ * The bench
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The bench floats over the deck rather than sitting under it.
+ *
+ * As a flow item it did not fit: at the 900 x 520 minimum a second plate
+ * under the deck pushed the display through the bottom of the window and the
+ * page started to scroll. A development affordance does not get to break the
+ * smallest window the plug-in supports, so it overlays instead — which also
+ * means opening it never moves anything the panel was already showing.
+ */
+.bench {
+  position: absolute;
+  left: var(--res-gap); right: var(--res-gap); bottom: var(--res-gap);
+  z-index: 5;
+  max-height: min(62%, 420px);
+  padding: 9px 11px;
+  display: flex; flex-direction: column; gap: 7px;
+  overflow: auto;
+  background: var(--res-case);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.55);
+}
+.bench__head { display: flex; align-items: baseline; gap: 8px; }
+.bench__head .why { font-size: 9.5px; color: var(--res-faint); text-transform: none; letter-spacing: 0; }
+.bench__close { margin-left: auto; }
+.bench__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 9px; }
+.bench__card { background: var(--res-plate); border: 1px solid var(--res-line); border-radius: 5px; padding: 7px 9px; }
+.bench__card p { margin: 4px 0 0; font-size: 10.5px; color: var(--res-dim); }
+.bench table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.bench th { text-align: right; font-weight: 500; color: var(--res-faint); padding: 2px 6px 2px 0; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; }
+.bench th:first-child { text-align: left; }
+.bench td { text-align: right; padding: 1px 6px 1px 0; color: var(--res-ink); }
+.bench td:first-child { text-align: left; color: var(--res-dim); }
+.bench tr.nulled td { color: var(--res-null); }
+
+/* --------------------------------------------------------------------------
+ * Size
+ *
+ * The panel lays out down to 900 x 520, which is what `WINDOW_MIN` declares.
+ * What gives at the narrow end is the size of the knobs and the length of the
+ * prose — never the reading size of a figure, because the figures are the
+ * point of this panel.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * The deck shrinks by one scale factor at a time and never wraps to a second
+ * row. Nineteen knobs will not fit across 900 px at a comfortable size, and
+ * the choice is between smaller knobs and a second deck row — a second row
+ * costs the display 120 px, which is most of what it has at that height, so
+ * the knobs give instead. What never gives is the reading size of a figure.
+ */
+@media (max-width: 1400px) { :root { --knob-scale: 0.92; } }
+/*
+ * Below 1200 px the four groups stop fitting across one row, and the deck
+ * becomes two by two rather than being left to wrap.
+ *
+ * Wrapping is what this replaced, and it was worse in two ways: it put three
+ * groups on the first row and the fourth alone on a second, and whether it
+ * wrapped at all came down to a few pixels of slack — so a window a hair
+ * narrower reorganised the whole panel. A grid decides it at a stated width
+ * and packs evenly on both rows.
+ */
+@media (max-width: 1200px) {
+  :root { --knob-scale: 0.86; }
+  .deck { display: grid; grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 1000px) {
+  :root { --knob-scale: 0.78; --res-gap: 7px; }
+  .pick__blurb { font-size: 11px; }
+}
+
+/*
+ * What gives as the window gets shorter, in order.
+ *
+ * The rule is the one the sibling plug-in set: what goes is spacing and the
+ * length of the explanatory prose, never the reading size of a figure. Every
+ * sentence dropped here is still somewhere — the deck's second lines are on
+ * each control's tooltip, the object's description and its source are in the
+ * browse view in full, and the display's stamp never goes at all, because it
+ * is the one line that stops a screenshot being read as a measurement.
+ */
+@media (max-height: 660px) {
+  .md__legend .drop-short { display: none; }
+  .pick__blurb { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .knob__hint { -webkit-line-clamp: 1; height: 1.25em; }
+  /* The strip's paragraph goes; its three figures stay, and they are the argument. */
+  .sel__say { display: none; }
+  .sel { padding: 5px 11px; gap: 12px; }
+  .sel .knob__hint { display: none; }
+}
+/*
+ * The deck's second lines go here rather than at 560, because below this the
+ * display is down to about ninety pixels and every one of those twenty-two
+ * is worth more to it than to a caption that is also on a tooltip.
+ */
+@media (max-height: 640px) {
+  .deck .knob__hint { display: none; }
+}
+@media (max-height: 560px) {
+  .pick__blurb { display: none; }
+  /*
+   * At the shortest window the deck's second lines go, and the display's
+   * legend with them. The display itself is what this panel is for, so it is
+   * the last thing to give up a pixel.
+   */
+  .knob__hint { display: none; }
+  .md__legend { display: none; }
+  /* Explanatory prose, and the bench lists the same absences. */
+  .md__prov { display: none; }
+  .md__box { min-height: 84px; }
+  /* One line instead of three: the wall is the figure that matters. */
+  .sel__read { flex-direction: row; gap: 14px; }
+  .sel__k { min-width: 0; }
+}
