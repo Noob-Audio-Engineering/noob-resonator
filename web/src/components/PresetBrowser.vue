@@ -144,6 +144,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
             :key="presets.keyOf(p)"
             class="preset"
             :class="{ on: presets.keyOf(p) === presets.loadedKey, paired: pairOf.has(presets.keyOf(p)) }"
+            :data-preset="presets.keyOf(p)"
           >
             <button class="preset__pick" type="button" @click="presets.apply(p)">
               <span class="preset__name">

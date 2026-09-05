@@ -488,7 +488,7 @@ pub fn factory() -> Vec<Preset> {
         Preset {
             name: "Wood",
             group: g(Object::Plate),
-            description: "Material is the exponent in T60(f) = T60(f1)·(f/f1)^m, which Applied Acoustics publish quantitatively for the engine this one answers. At -1 a partial an octave up rings for half as long, so the top of the spectrum has gone before the bottom has begun to fade.",
+            description: "Material is the exponent in T60(f) = T60(f1)·(f/f1)^m, which Applied Acoustics publish quantitatively. At -1 a partial an octave up rings for half as long, so the top of the spectrum has gone before the bottom has begun to fade.",
             settings: Settings {
                 tune_hz: 180.0,
                 decay_s: 3.0,

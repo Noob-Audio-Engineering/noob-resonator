@@ -294,7 +294,8 @@ test('every ratio the engine gives for a drum head really is a Bessel zero', () 
 test('a drum head’s series is the published one, and it is not the rectangle’s', () => {
   const got = series('membrane_round');
   [1, 1.5933, 2.1355, 2.2954, 2.6531, 2.9173].forEach((w, i) => close(got[i], w, 5e-5, `partial ${i + 1}`));
-  // The reason the eighth object exists: a circle is not a rectangle.
+  // The reason the round head exists as its own object: a circle is not a
+  // rectangle, and no aspect ratio turns one into the other.
   const rect = rectModes(6, 1).map((m) => m.ratio);
   assert.ok(Math.abs(got[1] - rect[1]) > 0.01, 'a round head and a square one differ from the second partial on');
 });
@@ -304,14 +305,14 @@ test('the page’s rectangle and the engine’s are the same rectangle', () => {
   // the engine's table is one aspect. At aspect 1 the two must agree exactly,
   // and this is what would catch them drifting apart.
   //
-  // **The membrane is compared over a prefix and the plate over all of it**,
-  // because `--dump series` takes its rows in index order rather than in
-  // frequency order: a membrane's walk spends five hundred rows on i = 1
-  // before it reaches i = 2, so the cap cuts it off with whole families
-  // missing from partial seventeen up. The plate's walk terminates on its own
-  // and is complete. Reported to res-engine; when the dump sorts before it
-  // takes, this prefix goes away.
-  const mem = series('membrane').slice(0, 16);
+  // **This is the test that caught the dump.** It compared the whole membrane
+  // table and failed at partial seventeen, because `--dump series` took its
+  // rows in index order rather than in frequency order: the walk spends five
+  // hundred rows on i = 1 before it reaches i = 2, so the cap kept three
+  // families and dropped every mode with i >= 5, both halves of two
+  // degenerate pairs among them. The engine sorts before it takes now, and
+  // this compares all of it again.
+  const mem = series('membrane');
   rectModes(mem.length, 1).forEach((m, i) => close(m.ratio, mem[i], 2e-5, `membrane partial ${i + 1}`));
   const plate = series('plate');
   rectModes(plate.length, 1).forEach((m, i) => close(m.ratio ** 2, plate[i], 2e-3, `plate partial ${i + 1}`));

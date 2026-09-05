@@ -47,3 +47,39 @@ export function fieldAt(frame, layout, name, offset = 0) {
   const v = frame[offset + i];
   return Number.isFinite(v) ? v : null;
 }
+
+/**
+ * The largest integer a 32-bit float carries exactly.
+ *
+ * Past `2²⁴` a float is spaced more than one apart, so a number claiming to be
+ * a count of things has already lost the ability to be one.
+ */
+export const COUNT_MAX = 2 ** 24;
+
+/**
+ * Whether a value can be a count of things at all.
+ *
+ * **A number that cannot be a count is not a measurement, and the panel does
+ * not print it.** This is the same rule as "a non-finite value means not
+ * computed", carried one step further, and it exists because of a real frame:
+ * with the fundamental driven above Nyquist the engine had nothing under the
+ * axis and published `modes_available` as 1.8446744e19 — an unsigned 64-bit
+ * underflow, `0 - 1`, cast to a float. The panel printed it faithfully as
+ * *this object has 18446744073709552.0 k partials*, which is the failure this
+ * project keeps meeting from the other side: a number arriving in the right
+ * field, in the right units, that nothing measured.
+ *
+ * Refusing it is not the same as hiding it. The reader that uses this also
+ * reports which fields it refused, so the panel says the engine published
+ * something that is not a count rather than quietly showing a dash.
+ */
+export const isCount = (v) => v != null && Number.isFinite(v) && v >= 0 && v <= COUNT_MAX && Number.isInteger(v);
+
+/**
+ * One field out of a frame that is a count of things, or `null` when it is
+ * absent, not computed, or not a count.
+ */
+export function countAt(frame, layout, name, offset = 0) {
+  const v = fieldAt(frame, layout, name, offset);
+  return isCount(v) ? v : null;
+}

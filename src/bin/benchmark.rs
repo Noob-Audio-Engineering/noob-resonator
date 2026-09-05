@@ -26,6 +26,7 @@
 //! `--dump series` writes `id,object,i,j,ratio` for the probe to diff and for
 //! anything that wants to draw a series without a second solver.
 
+use std::cmp::Ordering;
 use std::fmt::Write as _;
 use std::time::Instant;
 
@@ -35,6 +36,10 @@ use noob_resonator::dsp::{Point, Resonator, Settings, bank, damp, guide, select,
 use rustfft::num_complex::Complex;
 
 const SR: f32 = 48_000.0;
+
+/// How many partials `--dump series` publishes per bank object: the lowest
+/// this many by frequency, not the first this many the walk happens to yield.
+const DUMP_PARTIALS: usize = 2000;
 
 // ---------------------------------------------------------------------------
 // The report
@@ -687,6 +692,28 @@ fn guide_section() -> Section {
             format!("{:.4} m, round trip {:.3} ms", g.column_m(), g.loop_ms()),
             "`c/2f` open and `c/4f` stopped, less Levine and Schwinger's end correction of 0.6133 a",
         );
+        // The drift the row above deliberately does not cover, stated rather
+        // than left for somebody to find. It is real dispersion and it is
+        // audible at the top of a bright column, so it belongs in the file.
+        let mut top = (0usize, 0.0f32, 0.0f32);
+        for (k, r) in g.resonances().iter().enumerate() {
+            let want = if odd {
+                (2 * k + 1) as f32 * 220.0
+            } else {
+                (k + 1) as f32 * 220.0
+            };
+            top = (k + 1, r.hz, cents(r.hz, want));
+        }
+        s.note(
+            format!("{name}: drift at the highest resonance"),
+            format!(
+                "resonance {} at {:.0} Hz, {:+.2} cents from the ideal series",
+                top.0, top.1, top.2
+            ),
+            "the third-order Lagrange fractional delay and the loss filter in the loop; a real \
+             column disperses too, and the row above is a band-limited claim rather than a \
+             claim about the whole band",
+        );
     }
     // The strike comb, measured by moving the strike.
     let run = |hit: f32| -> Vec<f32> {
@@ -1251,6 +1278,12 @@ fn settle_section() -> Section {
 /// one-based number, the same index a per-mode edit addresses. So a caller
 /// draws the odd series of a stopped pipe from the model that produces it
 /// rather than from `2n − 1` typed out again.
+///
+/// **Every object's rows are sorted by ratio and complete up to the last of
+/// them**, degenerate pairs included, so a reader can take the first `n` rows
+/// of an object and know it has the lowest `n` partials and not a subset of
+/// them. That is a guarantee about the file rather than a side effect of how
+/// the walk happens to be ordered.
 fn dump_series() {
     let mut out = String::from(
         "id,object,i,j,ratio
@@ -1264,7 +1297,32 @@ fn dump_series() {
                     object: *object,
                     ..Shape::default()
                 };
-                for p in noob_resonator::dsp::object::Walk::new(shape, 400.0).take(2000) {
+                // **Sort by ratio before taking, never by walk order.** The
+                // walk is index-major: on a membrane the whole `j` sweep for
+                // `i = 1` runs to 565 partials before `i = 2` begins, so a
+                // plain `take` kept three complete families and part of a
+                // fourth and dropped every mode with `i >= 5` — from the
+                // seventeenth partial upward, including both halves of
+                // degenerate pairs. A reader cannot repair that from the
+                // data, because the smallest missing ratio belongs to a
+                // family that is not in the file at all. Found by the panel
+                // agent, who noticed that two objects stopped at exactly the
+                // cap. Sorted, the cap means "the lowest n partials", which
+                // is what every reader of this file assumed it already meant.
+                let mut all: Vec<_> =
+                    noob_resonator::dsp::object::Walk::new(shape, 400.0).collect();
+                all.sort_by(|a, b| a.ratio.partial_cmp(&b.ratio).unwrap_or(Ordering::Equal));
+                // And never cut a degenerate family in half: if the partial
+                // after the cap sits at the same ratio as the last one kept,
+                // it belongs to the same pitch and goes in too. Otherwise the
+                // file would be complete up to its last ratio except at
+                // exactly that ratio, which is the sort of near-truth that
+                // costs somebody an afternoon.
+                let mut n = DUMP_PARTIALS.min(all.len());
+                while n < all.len() && all[n].ratio == all[n - 1].ratio {
+                    n += 1;
+                }
+                for p in &all[..n] {
                     let _ = writeln!(out, "{id},{label},{},{},{:.10}", p.i, p.j, p.ratio);
                 }
             }

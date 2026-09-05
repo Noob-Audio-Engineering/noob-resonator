@@ -1,17 +1,21 @@
 # The out-of-tree probe
 
-`cargo run --release --bin benchmark -- --dump` writes one line per partial —
-`object,i,j,ratio` — for every object the mode bank renders. A separate program,
-about three hundred lines of Python written from the published formulae and
-sharing no line with this repository, computes the same series for itself and
-diffs the two.
+`cargo run --release --bin benchmark -- --dump series` writes one line per
+partial — `id,object,i,j,ratio` behind a header row — for every object, the two
+air columns included. A separate program, about four hundred lines of Python
+written from the published formulae and sharing no line with this repository,
+computes the same series for itself and diffs the two.
 
 It lives at `tools/physics_probe.py`, and is run as:
 
 ```sh
-cargo run --release --bin benchmark -- --dump > series.csv
+cargo run --release --bin benchmark -- --dump series > series.csv
 python tools/physics_probe.py --compare series.csv
 ```
+
+**The dump's rows are sorted by ratio and complete up to the last of them**,
+and each object in the probe states the range it is checked over. Both of those
+are recent and both were bugs first; see *What it caught* below.
 
 **Its independence is in the implementation, not the directory.** It began in a
 session scratchpad on the reasoning that being outside the crate made it
@@ -62,11 +66,26 @@ which is the mass normalisation the mode gains depend on.
 
 ## And then it does not disagree
 
-Across every object and every partial the two both cover — the beam, the string,
-both membranes and the plate, some five thousand partials — the worst
+Across every object and every partial the two both cover — the beam, the tine,
+the string, both membranes and both plates, **3,960 partials** — the worst
 disagreement is **0.0001 cents**. A cent is roughly the threshold of pitch
 discrimination, so that is four orders of magnitude inside anything audible and
 is the accuracy of the probe's own quadrature rather than of this engine.
+
+The **air columns** are checked too, and they are the one place a disagreement
+is expected rather than feared. A delay loop with a third-order Lagrange
+fractional delay disperses, so its agreement with an ideal `n` or `2n − 1`
+column is a band-limited claim: it is held to the same sixteen partials and the
+same one cent `docs/BENCHMARK.md` publishes — worst **0.53 cents** for the
+stopped column — and the drift above that, 2.7 cents by the fifty-third
+partial, is printed beside it as a measurement rather than asserted as a pass.
+
+**Each object also states its range, and a partial inside that range which the
+probe cannot produce fails the run.** The two discs are why: every zero there is
+bisected on an integral rather than looked up, so they are swept to a ratio
+bound — 30 for the round membrane, 200 for the clamped plate — and are complete
+up to it, which is a claim the probe can make about a set rather than about a
+count.
 
 The one series it cannot check is the **marimba's**, and that is stated rather
 than glossed: an arch-cut bar's tuned overtones are a maker's targets from the
@@ -77,7 +96,30 @@ disagree about the second one are a control on the panel.
 
 ## What it caught
 
-Two things, and both were real.
+Four things, and all of them were real.
+
+**A dump that was not a series.** `--dump` took the first 2,000 partials the
+walk yielded, and the walk is index-major: on a membrane the whole `j` sweep
+for `i = 1` runs to 565 partials before `i = 2` begins, so 2,000 rows held four
+families and **nothing with `i` of 5 or more, from the seventeenth partial
+upward** — both halves of degenerate pairs among them. Nothing downstream could
+have repaired it, because the smallest missing ratio belonged to a family that
+was not in the file at all, and a checker comparing against that table would
+either report a false disagreement or agree with it for the wrong reason. Found
+by the panel agent, from the tell that exactly two objects stopped at exactly
+the cap. The rows are sorted by ratio before the cap now, so the cap means what
+every reader already assumed it meant.
+
+**A probe that skipped what it could not compute.** The mirror of the same
+fault, on the other side of the comparison: the discs' reference series were
+generated over a *box* of indices, `m < 12` and `n <= 12`, and a box misses low
+partials at high angular order, since `j(30,1)` sits below `j(5,8)`. Those rows
+were counted as "not in the probe's own range" and passed over, which made a
+partial the probe could not produce look exactly like a partial it had checked.
+Both discs are now swept to a ratio bound and are complete up to it, and a hole
+inside the bound fails the run — which took the round membrane from 144
+scattered modes checked to 643, and the clamped plate from 64 to 242. The worst
+disagreement on the plate is at `(13, 1)`: a mode the old box could not see.
 
 **A parity error in Miller's recurrence.** The sum rule that normalises the
 downward recurrence is `J₀ + 2·Σ J_{2k} = 1`, and only every *other* value that

@@ -94,6 +94,63 @@ def plate_round(count):
     return [(v / base, m, n) for v, m, n in zs[:count]]
 
 
+def bessel_zeros_below(m, xmax):
+    """Every positive zero of J_m below `xmax`, by the same scan and bisection.
+
+    The counted version above answers "the first n", which is the wrong
+    question for checking a table: a box of indices misses low partials at
+    high angular order, since j_(30,1) sits below j_(5,8). Sweeping to a bound
+    instead makes the set complete up to that bound, which is a property a
+    caller can state.
+    """
+    out = []
+    x = max(1e-6, float(m))
+    step = 0.05
+    prev = bessel_j(m, x)
+    while x < xmax:
+        x2 = min(x + step, xmax)
+        cur = bessel_j(m, x2)
+        if prev == 0.0:
+            out.append(x)
+        elif (prev > 0.0) != (cur > 0.0):
+            a, b = x, x2
+            fa = prev
+            for _ in range(80):
+                mid = 0.5 * (a + b)
+                fm = bessel_j(m, mid)
+                if (fm > 0.0) == (fa > 0.0):
+                    a, fa = mid, fm
+                else:
+                    b = mid
+            out.append(0.5 * (a + b))
+        x, prev = x2, cur
+    return out
+
+
+def disc_roots_below(m, lmax):
+    """Every root of the clamped-plate equation for order `m` below `lmax`."""
+    out = []
+    x = max(1e-6, float(m))
+    step = 0.05
+    prev = disc_equation(m, x)
+    while x < lmax:
+        x2 = min(x + step, lmax)
+        cur = disc_equation(m, x2)
+        if (prev > 0.0) != (cur > 0.0):
+            a, b = x, x2
+            fa = prev
+            for _ in range(80):
+                mid = 0.5 * (a + b)
+                fm = disc_equation(m, mid)
+                if (fm > 0.0) == (fa > 0.0):
+                    a, fa = mid, fm
+                else:
+                    b = mid
+            out.append(0.5 * (a + b))
+        x, prev = x2, cur
+    return out
+
+
 def bessel_zeros(m, count):
     """The first `count` positive zeros of J_m, by scanning for sign changes
     and bisecting. Slow and obviously correct, which is what a probe wants."""
@@ -246,6 +303,49 @@ def membrane_round(count):
     return [(z / j01, m, n) for z, m, n in zs[:count]]
 
 
+def membrane_round_to(rmax):
+    """Every mode of a clamped circular membrane at or below ratio `rmax`.
+
+    Complete by construction rather than by a box of indices, and the angular
+    sweep stops when an order's own first zero is already past the bound,
+    because j_(m,1) rises with m and nothing beyond it can come back under.
+    """
+    j01 = bessel_zeros(0, 1)[0]
+    xmax = rmax * j01
+    out = []
+    m = 0
+    while True:
+        zs = bessel_zeros_below(m, xmax)
+        if not zs:
+            break
+        for n, z in enumerate(zs, start=1):
+            out.append((z / j01, m, n))
+        m += 1
+    out.sort()
+    return out
+
+
+def plate_round_to(rmax):
+    """Every mode of a clamped circular plate at or below ratio `rmax`.
+
+    A plate's frequency goes as lambda squared, so the bound in lambda is the
+    square root of the bound in ratio.
+    """
+    base = disc_roots(0, 1)[0] ** 2
+    lmax = math.sqrt(rmax * base)
+    out = []
+    m = 0
+    while True:
+        ls = disc_roots_below(m, lmax)
+        if not ls:
+            break
+        for n, l in enumerate(ls, start=1):
+            out.append((l * l / base, m, n))
+        m += 1
+    out.sort()
+    return out
+
+
 def cents(a, b):
     return 1200.0 * math.log2(a / b)
 
@@ -389,25 +489,33 @@ def air_column(count, stopped):
 
 
 # The published label of every object this file can produce a series for, the
-# tolerance it is held to, and how many partials that tolerance covers.
+# tolerance it is held to, and the range that tolerance covers.
 #
-# The modal objects are closed form on both sides, so they are held to a
-# rounding error over every partial the engine publishes. The air columns are
-# not: they are a sampled delay loop with a third-order Lagrange fractional
-# delay, whose phase error grows with frequency, so their agreement with an
-# ideal column is a band-limited claim. They are held to the same sixteen
-# partials and the same one cent the benchmark publishes, and the drift above
-# that is printed rather than asserted.
+# Each entry is `(build, tolerance, head, rmax)`. `head` limits the claim to
+# the first n partials by index and `rmax` limits it to a ratio; whichever is
+# set, **anything the engine publishes inside the limit and this file cannot
+# find is a failure, not a footnote.** That rule is the point of the column:
+# the old version noted missing rows and carried on, so a partial this file
+# could not produce looked exactly like a partial it had checked.
+#
+# The modal objects are closed form on both sides and are held to a rounding
+# error. The discs cost real time here, because every zero is bisected on an
+# integral rather than looked up, so they are complete to a stated ratio
+# rather than over the whole published table. The air columns are a sampled
+# delay loop with a third-order Lagrange fractional delay whose phase error
+# grows with frequency, so their agreement with an ideal column is a
+# band-limited claim: the same sixteen partials and the same one cent the
+# benchmark publishes, with the drift above that printed rather than asserted.
 SERIES = {
-    "Beam": (lambda n: {(i, 0): r for i, r in enumerate(beam_ratios(n), start=1)}, 0.001, None),
-    "Tine": (lambda n: {(i, 0): r for i, r in enumerate(tine_ratios(n), start=1)}, 0.001, None),
-    "String": (lambda n: {(i, 0): r for i, r in enumerate(string_ratios(n), start=1)}, 0.001, None),
-    "Membrane": (lambda n: {(m, k): r for r, m, k in membrane_rect(1.0, 10**9)}, 0.001, None),
-    "Plate": (lambda n: {(m, k): r for r, m, k in plate_rect(1.0, 10**9)}, 0.001, None),
-    "Plate Round": (lambda n: {(m, k): r for r, m, k in plate_round(10**9)}, 0.001, None),
-    "Membrane Round": (lambda n: {(m, k): r for r, m, k in membrane_round(10**9)}, 0.001, None),
-    "Pipe": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, True), start=1)}, 1.0, 16),
-    "Tube": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, False), start=1)}, 1.0, 16),
+    "Beam": (lambda n: {(i, 0): r for i, r in enumerate(beam_ratios(n), start=1)}, 0.001, None, None),
+    "Tine": (lambda n: {(i, 0): r for i, r in enumerate(tine_ratios(n), start=1)}, 0.001, None, None),
+    "String": (lambda n: {(i, 0): r for i, r in enumerate(string_ratios(n), start=1)}, 0.001, None, None),
+    "Membrane": (lambda n: {(m, k): r for r, m, k in membrane_rect(1.0, 10**9)}, 0.001, None, None),
+    "Plate": (lambda n: {(m, k): r for r, m, k in plate_rect(1.0, 10**9)}, 0.001, None, None),
+    "Membrane Round": (lambda n: {(m, k): r for r, m, k in membrane_round_to(30.0)}, 0.001, None, 30.0),
+    "Plate Round": (lambda n: {(m, k): r for r, m, k in plate_round_to(200.0)}, 0.001, None, 200.0),
+    "Pipe": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, True), start=1)}, 1.0, 16, None),
+    "Tube": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, False), start=1)}, 1.0, 16, None),
 }
 
 
@@ -447,30 +555,46 @@ def compare(path):
         if entry is None:
             print(f"  {obj}: no independent series here, skipped")
             continue
-        build, tol, head = entry
+        build, tol, head, rmax = entry
         want = build(len(got) + 2)
         worst = 0.0
         worst_at = None
         beyond = 0.0
-        missing = 0
+        checked = 0
+        outside = 0
+        absent = []
         for i, j, r in got:
+            if rmax is not None and r > rmax:
+                outside += 1
+                continue
+            if head is not None and i > head:
+                w = want.get((i, j))
+                if w is not None:
+                    beyond = max(beyond, abs(cents(r, w)))
+                outside += 1
+                continue
             w = want.get((i, j))
             if w is None:
-                missing += 1
+                # Inside the range this file claims to cover, so it is a hole
+                # in the check and not a limit of it.
+                absent.append((i, j))
                 continue
+            checked += 1
             c = abs(cents(r, w))
-            if head is not None and i > head:
-                beyond = max(beyond, c)
-                continue
             if c > worst:
                 worst, worst_at = c, (i, j)
         worst_all = max(worst_all, worst)
-        note = f" ({missing} not in the probe's own range)" if missing else ""
+        note = f", {outside} outside the claimed range" if outside else ""
         if head is not None:
             note += f", {beyond:.3f} cents worst above partial {head}"
         mark = "" if worst <= tol else f"  ** over {tol} cents"
-        failed = failed or worst > tol
-        print(f"  {obj:<16} id {ids[obj]:>2}  worst {worst:.6f} cents at {worst_at}{note}{mark}")
+        if absent:
+            mark += f"  ** {len(absent)} inside the range are missing here, first {absent[0]}"
+        failed = failed or worst > tol or bool(absent)
+        print(
+            f"  {obj:<16} id {ids[obj]:>2}  {checked:>5} checked, "
+            f"worst {worst:.6f} cents at {worst_at}{note}{mark}"
+        )
     print(f"  -> worst over every object: {worst_all:.6f} cents")
     if bad_ids or failed:
         raise SystemExit(1)

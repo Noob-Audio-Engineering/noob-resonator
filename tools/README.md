@@ -37,17 +37,47 @@ we are free to rename — so anything keying off it was keying off the thing mos
 likely to move. The probe now checks that each label arrives under one index
 and no more.
 
-Worst disagreement to date: **0.0001 cents** over some five thousand partials
-across the beam, the tine, the string, both membranes and both plates, and
-**0.53 cents** over the first sixteen partials of the stopped air column.
+**Each object's rows are sorted by ratio and complete up to the last of them**,
+degenerate pairs included. That is a guarantee about the file and not a
+side effect of the walk, and it was not always true: the walk is index-major,
+so on a membrane the whole `j` sweep for `i = 1` runs to 565 partials before
+`i = 2` begins, and taking the first 2,000 rows kept three complete families
+and dropped **every mode with `i` of 5 or more, from the seventeenth partial
+upward**. A reader could not have repaired that from the data, because the
+smallest missing ratio belonged to a family that was not in the file at all.
+Found by the panel agent, from the tell that two objects stopped at exactly the
+cap.
+
+Worst disagreement to date: **0.0001 cents** over 3,960 partials across the
+beam, the tine, the string, both membranes and both plates, and **0.53 cents**
+over the first sixteen partials of the stopped air column.
+
+**Every object states the range it is checked over, and a partial inside that
+range which this file cannot produce is a failure rather than a footnote.**
+The earlier version noted missing rows and carried on, which made a partial it
+could not compute look exactly like a partial it had checked — the same shape
+of hole as the truncated dump, on the other side of the comparison. The two
+discs are the reason it matters: they used to be generated over a *box* of
+indices, `m < 12` and `n <= 12`, and a box misses low partials at high angular
+order, since `j(30,1)` sits below `j(5,8)`. They are now swept to a ratio
+bound and are complete up to it — 30 for the round membrane, 200 for the
+clamped plate — which took the round membrane from 144 scattered modes checked
+to 643, and the clamped plate from 64 to 242. The worst disagreement on the
+plate is at `(13, 1)`, a mode the old box could not see.
+
+Every zero is bisected on an integral representation rather than looked up, so
+the sweep costs real time: about 30 seconds for the whole run, which is why
+the discs are bounded by a ratio rather than run out to the end of the table.
 
 The air columns are the one place a disagreement is expected, and the probe
 says so rather than hiding it. They are a delay loop with a third-order
 Lagrange fractional delay whose phase error grows with frequency, so agreement
 with an ideal `2n − 1` column is a band-limited claim: it is held to the same
 sixteen partials and the same one cent the benchmark publishes, and the drift
-above that — 2.7 cents by the fifty-third partial, near 12 kHz — is printed
-beside it as a measurement rather than asserted as a pass.
+above that — 2.7 cents by the fifty-third partial — is printed beside it as a
+measurement rather than asserted as a pass. `docs/BENCHMARK.md` carries the
+same figure as its own row, so the dispersion is documented where somebody
+tuning a bright column would look for it.
 
 ## `manifest_probe.mjs` — did the page ever connect?
 

@@ -8,8 +8,8 @@
  * It writes:
  *
  * * `src/previews.js` — forty ratios per object, for the browse view's rows.
- *   The browser draws eight objects at once and only one of them is loaded,
- *   so those rows cannot read the `modes` stream and cannot solve anything
+ *   The browser draws ten objects at once and only one of them is loaded, so
+ *   those rows cannot read the `modes` stream and cannot solve anything
  *   either. They read a table, and this is where the table comes from.
  * * `src/dev/series-table.js` — the same numbers with their mode indices, for
  *   the design-mode stand-in, so a page opened with no plug-in running draws
@@ -90,40 +90,33 @@ function parse(csv) {
     }
     (out[o.id] ||= []).push({ i: Number(i), j: Number(j), r: Number(r) });
   }
-  // The engine walks its mode indices in its own order, which is not frequency
-  // order for a surface. Sorting here is presentation, not physics: every row
-  // is kept and none is changed.
-  for (const list of Object.values(out)) list.sort((a, b) => a.r - b.r);
+  // **The dump has to arrive in frequency order, and this checks rather than
+  // assumes.** It did not, once: the walk is index-major, so on a membrane the
+  // whole `j` sweep for `i = 1` ran to five hundred and sixty-five partials
+  // before `i = 2` began, and the cap kept three complete families and part of
+  // a fourth — dropping every mode with `i >= 5` from the seventeenth partial
+  // up, both halves of two degenerate pairs among them. A prefix of a sorted
+  // list is complete; a prefix of a walk is not, and nothing in the file says
+  // which one you have.
+  //
+  // It cannot be repaired here either, because the smallest missing ratio
+  // belongs to a family that is not in the file. So this refuses, and the
+  // engine sorts.
+  for (const [id, list] of Object.entries(out)) {
+    for (let k = 1; k < list.length; k++) {
+      if (list[k].r < list[k - 1].r - 1e-9) {
+        throw new Error(
+          `the dump is not in frequency order for ${id}: partial ${k} sits at ${list[k].r} below ` +
+            `${list[k - 1].r}. A prefix of an index-ordered walk is missing whole mode families from ` +
+            'the bottom of the series. Sort by ratio before taking, and dump again.',
+        );
+      }
+    }
+  }
   return out;
 }
 
-/**
- * How many rows the engine takes per object before it stops walking.
- *
- * **A count that equals this exactly means the dump is truncated in index
- * order, not in frequency order, and whole mode families are missing from the
- * bottom of the table.** A membrane's walk is i-major and spends five hundred
- * and sixty-five rows on i = 1 alone, so two thousand rows reaches i = 4 and
- * every mode with i = 5 or above is absent — including both halves of
- * degenerate pairs that belong at partial seventeen.
- *
- * It cannot be repaired from the data, because the smallest missing ratio
- * belongs to a family that is not in the file and there is nothing left to
- * bound it with. So this refuses rather than trimming to a number it cannot
- * justify.
- */
-const WALK_CAP = 2000;
-
 const table = parse(dump());
-
-const truncated = Object.entries(table).filter(([, list]) => list.length === WALK_CAP);
-if (truncated.length) {
-  throw new Error(
-    `the dump is truncated in index order for: ${truncated.map(([id]) => id).join(', ')} — ` +
-      `each stopped at exactly ${WALK_CAP} rows, so whole mode families are missing from the bottom ` +
-      'of the series. Sort by ratio before taking, or walk to a lower max_ratio, and dump again.',
-  );
-}
 
 const missing = OBJECTS.filter((o) => !table[o.id]);
 if (missing.length) throw new Error(`the dump has no series for: ${missing.map((o) => o.id).join(', ')}`);

@@ -7,16 +7,16 @@
  * from the panel it represents. A resonator has no faceplate — a bar, a drum
  * head and a length of pipe all look like the same grey box — but it has
  * something better: the series *is* the difference between them. The browser
- * does not merely list eight names; it shows why a beam is not a string
+ * does not merely list ten names; it shows why a beam is not a string
  * before you have committed to anything.
  *
  * **It reads a table and computes nothing.** Every partial the panel draws
  * for the loaded object arrives on the `modes` stream, and a browser showing
- * eight objects at once cannot do that, because only one of them is loaded.
- * Solving eight beam equations in the front end to draw eight thumbnails is
+ * ten objects at once cannot do that, because only one of them is loaded.
+ * Solving ten eigenvalue problems in the front end to draw ten thumbnails is
  * exactly what this page's architecture forbids, so the ratios come from
- * `previews.js`, which is generated from the engine's own equations and
- * regenerated when they move.
+ * `previews.js`, which is generated straight out of the engine by
+ * `benchmark --dump series` and regenerated when its numbers move.
  *
  * **Every preview shares one axis**, and it has to: a row scaled to its own
  * top partial would make a membrane that stops at 5× and a beam that reaches

@@ -2088,6 +2088,14 @@ fn the_figures_in_the_preset_prose_are_ones_this_engine_still_produces() {
     says("Flat Strike", "292");
 
     // Lehtonen's stiff string: where the sixteenth partial lands.
+    //
+    // **B comes from `Settings::inharm_b()` and must not be inlined here.**
+    // The control is quadratic in `B`, deliberately, so that a real piano's
+    // 3e-4 sits where a knob can be put on it rather than in the first pixel.
+    // Reproducing that mapping in a test is how I put this preset three
+    // orders of magnitude out while "correcting" it toward the published
+    // figure: a second copy of a conversion is a second thing to get wrong,
+    // and the copy is the one nobody re-derives.
     let wire = by_name("Piano Wire");
     let shape = Shape {
         object: Object::String,

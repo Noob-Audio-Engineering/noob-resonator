@@ -43,7 +43,7 @@ and is dressed here as this panel's lit keys.
 
 **All of the mathematics in this plug-in belongs to the Rust engine.** It
 computes the partials, the levels and the ring times and publishes them on
-three streams; this page draws them and derives none of them. There is no
+four streams; this page draws them and derives none of them. There is no
 physics in `src/` outside one quarantined directory, and a production build
 does not contain a byte of that.
 
@@ -54,8 +54,39 @@ the front end solving a transcendental beam equation, finding nodes by
 bisection and deriving levels in JavaScript. Two implementations of the same
 physics is one too many, and the one that ships is not this one.
 
+**The second half of that correction went in later, and it went in because the
+drift finally happened.** Even quarantined, the page still solved every
+eigenvalue problem again in JavaScript to fill its design-mode streams — a
+Newton search for the beam's roots, a Bessel solver by Simpson integration for
+the round head's. Careful, tested, and still two implementations with nothing
+comparing them. Then the engine appended two objects, this page's catalogue
+still had eight, `objectAt` clamped, and choosing either of the new ones would
+have printed *Membrane Round* on the face over a different object's partials.
+
+So the series come off the engine now. `cargo run --release --bin benchmark --
+--dump series` writes `id,object,i,j,ratio`, and `tools/gen-previews.mjs`
+turns it into two tables: `src/previews.js` for the browse rows, and
+`src/dev/series-table.js` for the design-mode stand-in to walk. **The generator
+fails outright** if the dump names an object this catalogue does not have, if
+the catalogue has one the dump does not, if an index and a label disagree, or
+if the rows are not in frequency order. The line is drawn at **root-finding and
+special functions, which are the engine's**, against **closed-form algebra over
+a live control, which stays here** — the rectangle's eigenvalues, because Ratio
+is a control and the dump is one aspect; the air column's phase, because
+Opening sweeps; the stiff-string stretch; and the mode shapes. What left was
+`beamEigenvalues`, `besselZeros`, `circleModes` and every Newton loop in the
+front end.
+
+The tests changed shape with it, and improved. They used to check the page's
+solver against the literature; they now feed **the engine's own table** back
+through the equation that defines it — each beam ratio turned into `β₁√r` and
+substituted into `cos β · cosh β = 1`, each round-head ratio multiplied by
+`j₀₁` and put through the Bessel integral — which owes nothing to the code that
+produced them. That is a test of the shipping numbers rather than of a second
+copy of them.
+
 **How it is arranged now.** `src/dev/` is the quarantine: the design manifest
-and, under it, the equations. Its only job is to fill the same three streams
+and, under it, the equations. Its only job is to fill the same four streams
 the engine will, so the page still renders before the plug-in is running and
 when somebody clones the repository to look at it. It is loaded from a dynamic
 import behind `import.meta.env.DEV`, so it is not in a release build; the panel
@@ -66,7 +97,7 @@ The line is easy to check, which is the point of drawing it there:
 
 ```
 src/objects.js          the catalogue — names, blurbs, sources. No arithmetic.
-src/previews.js         a generated ratio table for the browse view. Data, not a computation.
+src/previews.js         a ratio table generated from the engine. Data, not a computation.
 src/composables/        parameter handles and stream readers. No physics.
 src/components/         axes, marks and prose. No physics.
 src/dev/manifest.js     the contract, and the stand-in that fills the streams   ← dev only
@@ -110,8 +141,8 @@ have to be worked out on this side. The display still shows the nulls when
 **There are two engines behind one control, and the panel does not hide it.**
 
 Any vibrating object's motion decomposes into normal modes, and each mode is
-one exponentially decaying sinusoid — one two-pole resonant bandpass. So six
-of the eight objects are a **mode bank**: a countable list of resonators, one
+one exponentially decaying sinusoid — one two-pole resonant bandpass. So eight
+of the ten objects are a **mode bank**: a countable list of resonators, one
 per partial, each paid for separately.
 
 An air column is different in kind. The object is only a boundary and what
@@ -288,6 +319,14 @@ rather than getting a gesture that would have to lie about its own axis.
 than none, so the plot is a single stop and the arrows walk the series, Home
 and End go to its ends, and Escape lets go.
 
+**A mode's identity is the pair, everywhere, including in the markup.** Every
+list the display draws — the bars, the handles, the ghosts, the ring dots — was
+keyed on `i` alone, and a surface's modes routinely share a first index: (1,5)
+and (1,6) are two partials at two frequencies with one key between them, so the
+framework patched one element where two were meant. It warned on both discs and
+every rectangle. The same pair that addresses an override now keys the markup,
+which is the point of having a pair at all.
+
 **Undo does not reach these**, and the editor says so rather than leaving it
 to be discovered. The framework's history covers parameters, and the override
 table is plug-in state rather than a parameter — which is exactly what lets it
@@ -329,7 +368,21 @@ other deliberate pair too.
 the engine: a second copy of the truth across a wire is a second thing that
 can disagree, and plausible disagreement is the failure this project keeps
 catching. The mode table is part of the comparison, because it is part of the
-preset.
+preset. It reads through the framework's parameter *handles* rather than the
+client's own `Param`, which is not reactive — read from there the diff never
+re-evaluated and the edited dot never appeared however far you moved a knob,
+which is a status wrong in the reassuring direction.
+
+**Checked against a running plug-in rather than against design mode**, because
+design mode is where a preset system would look perfect and prove nothing.
+Driving the real panel over the real bridge: the 33 factory presets arrive from
+the engine's manifest and draw in ten groups; loading Glockenspiel puts the
+object on Beam and Tune on 880 Hz in plain units; the pair loads with every
+*knob* identical and Selection alone moved, which is the whole argument;
+`Hand Bell` arrives with its five retuned partials marked on the display, and
+loading a preset with an empty `modes` clears them again; moving a control
+raises the edited dot; and a saved user preset survives a page reload, which is
+what proves it is in the plug-in state rather than in the page.
 
 ### The browse view — **the sibling lab did this first**
 
@@ -338,15 +391,25 @@ for" line naming actual uses. That whole shape is
 [Noob CompressorLab](../../noob-compressorlab/web/README.md)'s model browser,
 and it is adopted rather than reinvented.
 
+**Every row says where its own numbers came from.** All ten are the engine's
+now, the air columns included — those are measured off the running delay loop
+rather than assumed from the ideal `2n − 1`, which turns out to matter: a real
+loop with a filtered reflection is dispersive, and its fifty-third resonance
+sits about 2.7 cents sharp of where the closed form puts it. The label stays
+even though every row currently reads the same, because "these are the
+engine's partials" and "these are the equation's partials" are not the same
+claim and the day one row stops being the first, the face should say so rather
+than the code quietly forgetting.
+
 **What makes it fit better here is the preview.** The lab previews a
 compressor with its real faceplate, so a thumbnail cannot drift from the panel
 it represents. A resonator has no faceplate — a bar, a drum head and a length
 of pipe all look like the same grey box — but it has something better: the
 series *is* the difference between them. So each row draws that object's own
 partials on one shared six-octave ruler, from a table generated out of the
-same equations — because a browser showing eight objects cannot read a stream
-that only carries the loaded one, and solving eight beam equations in the
-front end is what this page's architecture forbids. The bar heights there are
+engine — because a browser showing ten objects cannot read a stream that only
+carries the loaded one, and solving ten eigenvalue problems in the front end is
+what this page's architecture forbids. The bar heights there are
 a drawing convention; only the positions mean anything, which is also the
 honest thing, since an object's levels depend on damping the row knows nothing
 about. The browser does not merely list eight
@@ -373,7 +436,7 @@ bank is a stack of filters, one per partial, each paid for; a waveguide is one
 delay loop with a reflection at each end and every partial falls out of it for
 the same price. That is why Modes is live on one and greyed on the other.
 
-### The eight objects and the control set — **Ableton did this first**
+### The first seven objects and the control set — **Ableton did this first**
 
 Beam, Marimba, String, Membrane, Plate, Pipe and Tube are Corpus's model list
 in Corpus's own index order, and Decay, Material, Brightness, Inharmonics,
@@ -382,12 +445,37 @@ controls. Adopting them makes an A/B honest and costs a musician nothing to
 learn, and we are saying so rather than pretending we arrived at the same
 seven objects independently.
 
-**The eighth is ours.** Corpus's Membrane is a rectangle and a drum head is a
-circle; the two have genuinely different series — the circular one is the
-zeros of the Bessel functions, 1 : 1.593 : 2.136 : 2.296 — and a circle has no
-aspect, so Ratio is meaningless on it rather than merely unused. It is
-appended rather than slotted in beside the rectangle, because a saved
-project's object is its index.
+**Three are ours, and each adds a family rather than a variation.**
+
+* **Membrane Round.** Corpus's Membrane is a rectangle and a drum head is a
+  circle; the two have genuinely different series — the circular one is the
+  zeros of the Bessel functions, 1 : 1.593 : 2.136 : 2.296 — and a circle has
+  no aspect, so Ratio is meaningless on it rather than merely unused.
+* **Tine.** The same bar as Beam with one end held instead of free, which is
+  one sign in the frequency equation — `cos β · cosh β = −1` rather than `+1` —
+  and a different instrument. A free bar's overtones sit at 2.76 and 5.40; a
+  cantilever's at 6.27 and 17.5, so there is nothing left in the range where a
+  glockenspiel clangs and it rings almost pure. A tuning fork, a music box
+  tooth, an electric piano tine.
+* **Plate Round.** A disc held at its rim by its own stiffness rather than by
+  tension: 1 : 2.08 : 3.41 : 3.89 : 5.00, far wider than the round head's,
+  because a stiff object's frequencies go as the square of the eigenvalue
+  where a tensioned one goes as the eigenvalue itself. Same outline as a drum
+  head, entirely different instrument. Its own caveat is on the face: a real
+  cymbal is *free* at its rim rather than clamped, and its crash is a
+  nonlinearity no linear resonator has — this is the clamped disc, which is a
+  bell plate.
+
+Each is **appended rather than slotted in** beside the object it is related
+to, because a saved project's object is its index.
+
+**And the catalogue is checked against the engine rather than trusted**, which
+it had to be after it went stale: the engine appended Tine and Plate Round,
+this page still listed eight, and `objectAt` clamps — so choosing either would
+have drawn "Membrane Round" on the face over a different object's partials. A
+wrong name printed confidently is worse than a blank. `tools/gen-previews.mjs`
+now refuses to write anything if the two lists disagree in either direction, or
+if an index and a label disagree.
 
 Greying out the controls an object has nothing for is theirs too. **The page
 does not derive which ones**: the engine publishes an `objects` table in its
@@ -402,6 +490,19 @@ Keying the lookup by the catalogue's string id instead matched nothing — and
 matched nothing *silently*, so the panel greyed no control at all while
 looking entirely correct against a design manifest that happened to use
 strings. It is looked up by index now.
+
+**And the page checks that list before it greys anything from it.** The engine
+renamed the mode-budget parameter from `modes` to `mode_budget` and the object
+table went on naming `modes`, so every bank object's `uses` array named a
+control that did not exist and did not name the one that did. The panel greys
+from `uses`, so the headline knob of the whole device would have been dark in
+the host and alive everywhere it was tested — silent, and invisible to any test
+that reads only one side. So the page compares the two lists it already has:
+**where `uses` names a control this build does not publish, the list is stale,
+the panel greys nothing at all from it, and it says so on the object bar in the
+warning colour.** A stale list is not evidence about any control, and failing
+towards a working panel with a visible complaint is better than failing towards
+a dead knob in silence. Fixed at the engine's end; the check stays.
 
 **The engine took half the argument.** The air columns keep Bright, Hit and
 both pickups, which is the physics: a pipe loses its highs to the walls and
@@ -490,25 +591,35 @@ silently is the thing being improved on.
 
 **The stamp says which of two things is filling the streams.** Live, the
 partials came from the engine and there is no stamp. In design mode it reads
-*these partials are the page's own arithmetic, not the engine's*, and it sits
-inside the plot on the level axis rather than floating as a caption, because a
-reader needs to know precisely which picture they are looking at.
+*every level here is the page's own arithmetic · the ratios are the engine's
+table*, and it sits inside the plot on the level axis rather than floating as a
+caption, because a reader needs to know precisely which picture they are
+looking at.
 
-The equations behind that arithmetic are worth their keep even so. **Seven of
-the eight series are the solution of a stated closed form and
-`test/design-physics.test.js` solves each one from scratch** — Newton on
-`cos x · cosh x = 1` for the beam, the Bessel integral and McMahon's expansion
-for the round head — and checks the result against the ratios the panel
-prints. Two results came out of writing those tests rather than out of reading
-a source, and both belong in the engine's own tests, where they will guard the
-numbers that actually ship:
+**That stamp got narrower rather than softer**, and the distinction is the
+point. It used to say the whole picture was the page's arithmetic, which was
+true when the page solved every series itself and became an overclaim the day
+the ratios started coming off the engine's own table. Overclaiming in the
+direction of caution sounds harmless and is not: a warning that is loose about
+what it warns of is one a reader learns to discount, and the sentence that has
+to survive a screenshot is *every level here is invented*.
+
+**Nine of the ten series are the solution of a stated closed form**, and
+`test/design-physics.test.js` holds the engine's own numbers to those forms
+rather than solving them a second time — each beam ratio turned back into its
+eigenvalue and substituted into `cos β · cosh β = 1`, each tine ratio into
+`cos β · cosh β = −1`, each round-head ratio multiplied by `j₀₁` and put through
+the Bessel integral, the rectangles compared against the page's own lattice,
+and the air columns against the ideal loop they are a dispersive version of.
+Two results came out of writing those tests rather than out of reading a
+source:
 
 - **The beam ratio quoted everywhere as 2.756 is a truncation of 2.75654, not
   a rounding of it.** Correctly rounded it is 2.757. Computing it rather than
   quoting it is the only way that stays true.
 - **An undercut bar has no closed form.** Its ratios are a maker's tuning
   target, which is why it is marked in the warning colour as a tuning target
-  against the other seven's closed forms, and why the two published values for
+  against the other nine's closed forms, and why the two published values for
   its third partial are offered as a builder's choice rather than averaged
   into a bar nobody has built. It carries the further caveat that the mode
   shapes used for its node positions are still the uniform bar's, because the
@@ -526,6 +637,13 @@ published a convincing `0.0` — and the level meter dutifully reported
 non-finite value is how an engine says *not computed*: the page's field reader
 turns it into an absence and the readout that wanted it goes dark. A real zero
 still survives, because zero is a measurement.
+
+**A control that does nothing says so.** The clamped disc's mode shape needs a
+modified Bessel function, which is exactly the machinery that left this
+directory, so design mode does not model it: Hit and the two pickups do nothing
+on Plate Round until a plug-in answers, and the bench says which object and
+why. A dead knob that looks alive teaches the wrong thing about the product;
+a dead knob that is labelled teaches the right thing about the stand-in.
 
 **Nothing on this page animates.** The design generators are pure functions of
 the parameter values, so the panel sits perfectly still until a control moves
@@ -580,6 +698,14 @@ each by a stated rule:
   host parameters in six groups now, and at a window that cannot show them all
   every control stays reachable while the one plate carrying the argument
   keeps its floor. The scrollbar is the honest signal that there is more.
+- **A control's name wraps rather than running into its neighbour.** `Damp
+  Corner` sets sixty-six pixels wide and the cell it sits in is fifty once the
+  knob scale is down to 0.78, so at 900 px the damping row read
+  *INHARMDAMP CORNERHF SLOPE*. The label is the parameter's own name and the
+  panel does not get to shorten it — that is the name the host prints in an
+  automation lane, and a face that disagrees with the lane is worse than a face
+  that takes a second line. Every deck label reserves the room for a second
+  line whether it needs one or not, so a row of figures stays on one baseline.
 - **The Select strip loses its paragraph below 660 px of height**, keeping its
   three figures, which are the argument.
 - **The deck's second lines go below 640 px**, and the object's description
@@ -653,12 +779,14 @@ designing is not quietly wrong.
 
 | file | what |
 |---|---|
-| `objects.js` | the catalogue: eight objects, what each is, what it is for, and the equation its series is cited from. No arithmetic. |
+| `objects.js` | the catalogue: ten objects, what each is, what it is for, and the equation its series is cited from. No arithmetic. |
 | `streams.js` | reading a stream by the names it declares, and the rule that a non-finite value means *not computed*. No framework imports, so it can be tested. |
-| `previews.js` | a generated ratio table for the browse view's rows. Data, not a computation; rebuild with `npm run previews`. |
-| `composables/useResonator.js` | the parameter handles, the three streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
-| `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the three streams so the page renders without a plug-in |
-| `dev/physics/` | **dev only** — the equations behind that stand-in |
+| `previews.js` | forty ratios per object for the browse view's rows, **generated from the engine**; rebuild with `npm run previews`. |
+| `dev/series-table.js` | **dev only** — the same numbers with their mode indices, for the design-mode stand-in to walk. Generated, never hand-edited. |
+| `tools/gen-previews.mjs` | writes both, out of `benchmark --dump series`; refuses if the catalogue and the engine disagree about which objects exist, or if the dump is not in frequency order |
+| `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
+| `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
+| `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |
 | `components/ObjectBar.vue` | what is loaded, its far end when that is not what the name says, and the way in to changing it |
 | `components/EngineDiagram.vue` | the two engines, drawn, because the prose was not landing |
 | `components/PresetBrowser.vue` | presets, one per row, grouped by object, with the A/B pairs marked |

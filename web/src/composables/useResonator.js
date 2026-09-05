@@ -32,10 +32,10 @@ import {
   useWindowSize,
 } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import { objectAt } from '../objects.js';
-import { fieldAt, parseLayout } from '../streams.js';
+import { countAt, fieldAt, isCount, parseLayout } from '../streams.js';
 
 export { getClient, hasParam, hasStream, useParam, useNoobVstWebguiFramework, useStoredRef };
-export { fieldAt, parseLayout } from '../streams.js';
+export { countAt, fieldAt, isCount, parseLayout } from '../streams.js';
 
 /** Smallest window the panel lays out in, `[width, height]` CSS pixels; the Rust side will clamp to the same. */
 export const WINDOW_MIN = [900, 520];
@@ -499,17 +499,38 @@ export function useOverrides() {
  * understands and gets `null` for any the build does not declare, which is
  * what every optional readout on the panel branches on.
  */
+/** The `info` fields that are counts of things rather than quantities. */
+const COUNT_FIELDS = ['modes_used', 'modes_available'];
+
 export function useInfo() {
   const has = hasStream('info');
   const frame = has ? useStreamFrame('info') : { value: null };
   const layout = has ? layoutOf('info') : { index: {} };
   const at = (name) => computed(() => fieldAt(frame.value, layout, name));
+  const count = (name) => computed(() => countAt(frame.value, layout, name));
   return reactive({
     has,
     live: computed(() => frame.value != null),
     names: layout.index,
-    used: at('modes_used'),
-    available: at('modes_available'),
+    /**
+     * Count fields the engine published that cannot be counts.
+     *
+     * Printed rather than swallowed. Driving the fundamental above Nyquist
+     * left the engine with nothing under the axis and `modes_available`
+     * arriving as 1.8446744e19 — an unsigned underflow cast to a float — which
+     * the panel rendered, faithfully and absurdly, as *this object has
+     * 18446744073709552.0 k partials*. The number is refused now, and this is
+     * how the face says it was refused rather than merely missing.
+     */
+    bogusCounts: computed(() => {
+      const f = frame.value;
+      return COUNT_FIELDS.filter((n) => {
+        const v = fieldAt(f, layout, n);
+        return v != null && !isCount(v);
+      });
+    }),
+    used: count('modes_used'),
+    available: count('modes_available'),
     crossoverHz: at('crossover_hz'),
     columnM: at('column_m'),
     loopMs: at('loop_ms'),

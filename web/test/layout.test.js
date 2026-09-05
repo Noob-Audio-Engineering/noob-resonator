@@ -25,7 +25,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fieldAt, parseLayout } from '../src/streams.js';
+import { COUNT_MAX, countAt, fieldAt, isCount, parseLayout } from '../src/streams.js';
 
 /** The engine's own two layouts, as `dsp::streams` declares them. */
 const MODES = 'i,j,hz,db_l,db_r,t60_s';
@@ -119,4 +119,39 @@ test('a longer layout does not break a shorter reader', () => {
   assert.equal(fieldAt(frame, grown, 'hz'), 440, 'the old fields are still right');
   assert.equal(fieldAt(frame, grown, 'db_bare'), -1.5, 'and the new ones simply appear');
   assert.equal(fieldAt(frame, grown, 'base_hz'), 430);
+});
+
+// ---------------------------------------------------------------------------
+
+test('a number that cannot be a count is not read as one', () => {
+  // **The real frame this came from.** With the fundamental driven above
+  // Nyquist the engine had no partials under the axis and published
+  // `modes_available` as 1.8446744e19 — an unsigned 64-bit subtraction that
+  // ran past zero, cast to a float. The panel printed it faithfully as "this
+  // object has 18446744073709552.0 k partials", which is the same class of
+  // failure as the zero-filled frame: a number arriving in the right field, in
+  // the right units, that nothing measured.
+  const layout = parseLayout('modes_used,modes_available');
+  assert.equal(countAt([12, 1.8446744073709552e19], layout, 'modes_available'), null, 'the underflow');
+  assert.equal(countAt([12, 1.8446744073709552e19], layout, 'modes_used'), 12, 'and the field beside it survives');
+
+  assert.equal(isCount(0), true, 'zero is a count, and a real one');
+  assert.equal(isCount(4096), true);
+  assert.equal(isCount(COUNT_MAX), true, 'the last integer a float carries exactly');
+  assert.equal(isCount(COUNT_MAX * 2), false, 'past which it is no longer spaced one apart');
+  assert.equal(isCount(-1), false, 'nothing has a negative number of partials');
+  assert.equal(isCount(12.5), false, 'nor half of one');
+  assert.equal(isCount(NaN), false);
+  assert.equal(isCount(Infinity), false);
+  assert.equal(isCount(null), false);
+});
+
+test('and refusing it is not the same as hiding it', () => {
+  // The reader hands back nothing; the caller is expected to notice that a
+  // value arrived and was refused, so the panel can say so rather than showing
+  // a dash that reads as "this build does not publish it".
+  const layout = parseLayout('modes_used,modes_available');
+  const frame = [12, -1];
+  assert.equal(countAt(frame, layout, 'modes_available'), null, 'refused');
+  assert.equal(fieldAt(frame, layout, 'modes_available'), -1, 'but still there to be complained about');
 });
