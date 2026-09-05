@@ -523,6 +523,8 @@ export function useInfo() {
   const frame = has ? useStreamFrame('info') : { value: null };
   const layout = has ? layoutOf('info') : { index: {} };
   const at = (name) => computed(() => fieldAt(frame.value, layout, name));
+  /** One slot of a run-valued field, by name and offset. */
+  const at2 = (name, v) => fieldAt(frame.value, layout, name, v);
   const count = (name) => computed(() => countAt(frame.value, layout, name));
   return reactive({
     has,
@@ -573,6 +575,18 @@ export function useInfo() {
      * an absence rather than a zero.
      */
     voiceAvailable: (v) => countAt(frame.value, layout, 'voice_available', v),
+    /**
+     * Where a voice's pitch is coming from: `0` its own parameter, `1` a note
+     * held on the keyboard, `null` not sounding.
+     *
+     * **This is what stops a knob lying.** A held note bypasses the parameter
+     * rather than writing it — deliberately, because a parameter the audio
+     * thread wrote behind the host's back is a gesture nothing recorded — so
+     * while notes are down the control shows one pitch and the voice sounds
+     * another. Without this field the deck would be quietly wrong, which is the
+     * ruler-and-bars fault with a keyboard attached.
+     */
+    voiceSource: (v) => at2('voice_source', v),
     crossoverHz: at('crossover_hz'),
     columnM: at('column_m'),
     loopMs: at('loop_ms'),

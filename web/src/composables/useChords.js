@@ -193,60 +193,75 @@ export function noteName(rootHz, semis) {
 /** How many slots there are. Six, matching the voices, so a slot is a whole chord. */
 export const SLOT_COUNT = 6;
 
-/** The UI store key the slots live under, beside the mode table and the user presets. */
-export const SLOTS_KEY = 'chord_slots';
-
 /**
- * Six remembered chords, recallable from a panel position.
+ * Six remembered chords, recallable from a panel position or from a note.
  *
- * **A slot is a user-defined chord, so it takes the shape the engine already
- * publishes for one** — `{ name, voices, semis }`, exactly the fields of a
- * `meta.chords` entry minus the group. That is deliberate rather than
- * convenient: inventing a second shape for the same thing is how two halves of
- * a product come to disagree about what a chord is, and it means one renderer
- * draws the published chords and the remembered ones without caring which it
- * has.
+ * **The shape and the store key are the engine's, not mine.** They read these
+ * to recall a slot from MIDI, so inventing a second shape for the same thing is
+ * exactly the failure this project keeps finding — two halves that each look
+ * right and disagree. `meta.slots_key` names the key and the entries are
+ * `{ semis, voices }` with `semis` six long in voice order.
  *
- * **Storage here, recall from MIDI at the engine.** The lead's split, and it
- * follows from what each side can see: a slot has to survive a saved project,
- * which the UI store does, and only the engine sees a note arrive. So the page
- * writes the slots and the engine reads them the way it already reads the mode
- * table — through the store, not through a message a plug-in has no loop to
- * pump.
+ * **Storage here, MIDI recall at the engine.** That split follows from what
+ * each side can see: a slot has to survive a saved project, which the UI store
+ * does, and only the engine sees a note arrive. So the page writes and the
+ * engine reads, through the store hook the mode table already uses — not a
+ * message, which a plug-in has no loop to pump.
  *
- * **Recalling one is the same write as picking a chord**, through the ordinary
- * edit path, so the host records real gestures and undo reaches them. There is
- * no state in which a slot could tune the voices *instead* of the parameters
- * doing it.
+ * **An unstored slot recalls nothing rather than a chord of zeros.** Six
+ * zeroes is a valid chord — unison — so a half-written entry would retune the
+ * instrument instead of doing nothing, which is why an entry is either
+ * complete or absent.
  */
 export function useSlots() {
-  const stored = useStoredRef(SLOTS_KEY, null);
+  const { manifest } = useNoobVstWebguiFramework();
+  const key = computed(() => String(manifest.value?.meta?.slots_key || 'slots'));
+  const stored = useStoredRef(key.value, null);
   const chords = useChords();
+
+  /** The note that recalls each slot, when the build says. */
+  const notes = computed(() => {
+    const list = manifest.value?.meta?.slot_notes;
+    return Array.isArray(list) ? list.map(Number) : [];
+  });
 
   /** Always six entries, so a position is a position whatever the store holds. */
   const slots = computed(() => {
-    const raw = Array.isArray(stored.value) ? stored.value : [];
+    const raw = stored.value && Array.isArray(stored.value.slots) ? stored.value.slots : [];
     return Array.from({ length: SLOT_COUNT }, (_, i) => {
       const e = raw[i];
-      if (!e || !Array.isArray(e.semis) || !e.semis.length) return { i, empty: true };
-      return {
-        i,
-        empty: false,
-        name: String(e.name || `Slot ${i + 1}`),
-        voices: Number.isFinite(e.voices) ? Math.round(e.voices) : e.semis.length,
-        semis: e.semis.map(Number),
-      };
+      const note = notes.value[i];
+      const semis = e && Array.isArray(e.semis) ? e.semis.map(Number) : null;
+      const voices = e && Number.isFinite(e.voices) ? Math.round(e.voices) : 0;
+      // Complete or absent: a partial entry would recall a chord nobody stored.
+      if (!semis || !voices || semis.length < voices || semis.slice(0, voices).some((x) => !Number.isFinite(x))) {
+        return { i, empty: true, note };
+      }
+      return { i, empty: false, note, voices, semis: semis.slice(0, voices) };
     });
   });
 
   const write = (list) => {
-    stored.value = list.map((e) => (e.empty ? null : { name: e.name, voices: e.voices, semis: e.semis }));
+    stored.value = {
+      slots: list.map((e) =>
+        e.empty
+          ? null
+          : {
+              // Six long in voice order, as the engine reads it; the voices past
+              // the count are zero rather than absent.
+              semis: Array.from({ length: SLOT_COUNT }, (_, k) => e.semis[k] ?? 0),
+              voices: e.voices,
+            },
+      ),
+    };
   };
 
   return reactive({
     slots,
+    notes,
+
     /**
-     * Which slot the voices are currently at, or `null`.
+     * Which slot the voices are at, or `null`.
      *
      * Derived rather than remembered, exactly as the chord menu is: nudge a
      * voice after recalling slot 2 and it stops being slot 2 immediately, with
@@ -263,11 +278,11 @@ export function useSlots() {
     }),
 
     /** Put what is sounding into a position. */
-    store(i, name) {
+    store(i) {
       const now = chords.live;
       if (!now.length) return;
       const list = slots.value.map((e) => ({ ...e }));
-      list[i] = { i, empty: false, name: String(name || `Slot ${i + 1}`), voices: now.length, semis: [...now] };
+      list[i] = { i, empty: false, note: notes.value[i], voices: now.length, semis: [...now] };
       write(list);
     },
 
@@ -279,17 +294,16 @@ export function useSlots() {
 
     clear(i) {
       const list = slots.value.map((x) => ({ ...x }));
-      list[i] = { i: i, empty: true };
-      write(list);
-    },
-
-    rename(i, name) {
-      const clean = String(name || '').trim();
-      if (!clean) return;
-      const list = slots.value.map((x) => ({ ...x }));
-      if (list[i].empty) return;
-      list[i] = { ...list[i], name: clean };
+      list[i] = { i, empty: true, note: notes.value[i] };
       write(list);
     },
   });
 }
+
+/**
+ * A MIDI note number as a name — `36` is `C2`.
+ *
+ * The same convention as the note beside a voice pitch, so the two read alike.
+ */
+export const midiName = (n) =>
+  Number.isFinite(n) ? `${NOTES[((Math.round(n) % 12) + 12) % 12]}${Math.floor(Math.round(n) / 12) - 1}` : '';

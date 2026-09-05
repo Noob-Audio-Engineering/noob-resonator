@@ -95,12 +95,27 @@ const rootHz = computed(() =>
 function voiceOff(index) {
   const byObject = off('voices');
   if (byObject) return byObject;
+  // **A held note bypasses this control rather than writing it**, so while the
+  // note is down the knob shows one pitch and the voice sounds another. That is
+  // deliberate at the engine — a parameter the audio thread wrote behind the
+  // host's back is a gesture nothing recorded — but it means the control is not
+  // in charge, and a knob that does not say so is a knob claiming a pitch it is
+  // not setting.
+  if (info.voiceSource(index) === 1) {
+    return {
+      short: 'a held note has it',
+      why: 'A note is holding this voice, and while it is down the keyboard sets the pitch rather than this control. The value here is kept and comes back the moment you let go.',
+    };
+  }
   if (index < chords.sounding) return null;
   return {
     short: 'past the voice count',
     why: `Voices is at ${chords.sounding}, so this one is not sounding. Raise Voices and it comes back — the pitch you set here is kept either way.`,
   };
 }
+
+/** How many voices a keyboard is holding right now. */
+const held = computed(() => chords.ids.filter((_, i) => info.voiceSource(i) === 1).length);
 
 /**
  * What the contact controls are called on this object.
@@ -151,7 +166,13 @@ const ax = (base, which) => {
     -->
     <section v-if="chords.has && r.voices" class="deck__group plate">
       <h3 class="cap deck__head">
-        Chord<span class="why">{{ off('voices') ? off('voices').short : `what it is tuned to · ${chords.label}` }}</span>
+        Chord<span class="why">{{
+          off('voices')
+            ? off('voices').short
+            : held
+              ? `${held} voice${held === 1 ? '' : 's'} held from the keyboard`
+              : `what it is tuned to · ${chords.label}`
+        }}</span>
       </h3>
       <div class="deck__row">
         <ResKnob :p="r.voices" label="Voices" :size="48" :off="off('voices')" hint="how many roots sound" />

@@ -18,7 +18,7 @@
  */
 import { onBeforeUnmount, onMounted } from 'vue';
 import { hzText, ui, useObject, useRes } from '../composables/useResonator.js';
-import { noteName, useChords, useSlots } from '../composables/useChords.js';
+import { midiName, noteName, useChords, useSlots } from '../composables/useChords.js';
 
 const chords = useChords();
 const slots = useSlots();
@@ -71,7 +71,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
         <div class="browse__family">
           <div class="browse__familytext">
             <span class="browse__familyname">Your six</span>
-            <span class="browse__familynote">store what is sounding, recall it by position</span>
+            <span class="browse__familynote">store what is sounding, recall it by position or by note</span>
           </div>
         </div>
         <div class="slots">
@@ -86,19 +86,26 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
               class="slot__pick"
               type="button"
               :disabled="e.empty"
-              :title="e.empty ? 'Nothing stored here yet' : `Tune the voices to ${e.name}`"
+              :title="e.empty ? 'Nothing stored here yet' : 'Tune the voices to this'"
               @click="slots.recall(e)"
             >
               <span class="slot__n">{{ e.i + 1 }}</span>
               <span class="slot__body">
-                <span class="slot__name">{{ e.empty ? 'empty' : e.name }}</span>
+                <span class="slot__name">
+                  {{ e.empty ? 'empty' : `${e.voices} voice${e.voices === 1 ? '' : 's'}` }}
+                  <!--
+                    The note that recalls it, printed rather than hardcoded: a
+                    performance affordance nobody can discover is not one.
+                  -->
+                  <i v-if="e.note != null" class="slot__note">{{ midiName(e.note) }}</i>
+                </span>
                 <span v-if="!e.empty" class="slot__semis tabular">
                   {{ e.semis.map((x) => (x > 0 ? `+${x}` : x)).join('  ') }}
                 </span>
               </span>
             </button>
             <span class="slot__tools">
-              <button class="key" type="button" title="Store what is sounding here" @click="slots.store(e.i, `Slot ${e.i + 1}`)">
+              <button class="key" type="button" title="Store what is sounding here" @click="slots.store(e.i)">
                 Store
               </button>
               <button v-if="!e.empty" class="key" type="button" title="Empty this position" @click="slots.clear(e.i)">
@@ -207,7 +214,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 }
 .slot.on .slot__n { background: var(--res-brass); color: #14171b; }
 .slot__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.slot__name { font-size: 12px; }
+.slot__name { font-size: 12px; display: flex; align-items: baseline; gap: 6px; }
+.slot__note { font-style: normal; font-size: 9px; color: var(--res-faint); letter-spacing: 0.05em; }
 .slot__semis { font-size: 9.5px; color: var(--res-faint); }
 .slot__tools { display: flex; gap: 3px; }
 </style>
