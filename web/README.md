@@ -547,19 +547,26 @@ a performance affordance nobody can discover is not one.
 a valid chord — unison — so a half-written entry would retune the instrument
 instead of doing nothing, which is why an entry here is complete or absent.
 
-**And it stayed two states rather than becoming three, which is the right
+**It stays two states rather than becoming three, which is the right
 resolution.** The engine deliberately does not distinguish a panel recall from a
 note recall — the same chord would read differently depending on which hand
-moved it, and that difference is not about the sound. What changed is the
-boundary between the two states, not their number: a panel recall *writes* the
-parameter, so the parameter is in charge and the field says so; a note recall
-does not, so it does not. One predicate, true of both routes, and the thing the
-face actually needs to know.
+moved it, and that difference is not about the sound. What is being corrected is
+the *boundary* between the two states, not their number: a panel recall writes
+the parameter, so the parameter is in charge and the field should say so; a note
+recall does not, so it should not.
 
-**The face was written to the corrected predicate before the engine carried
-it**, the same way the air-column readout stopped claiming a length before the
-field went NaN. Its wording is true under both definitions, so nothing here
-changes when the engine lands the fix.
+**Until that correction lands, one case is invisible and this paragraph is the
+warning.** A chord recalled *from MIDI* sounds the slot's pitches while
+`voice_source` still reports the parameter, so the deck can show a control as in
+charge when it is not. The fix is ruled and being written; it is recorded here
+anyway, because a fix that is coming is not a fix that has arrived, and this
+page is what protects somebody if it slips.
+
+**The face is already written to the corrected predicate**, the same way the
+air-column readout stopped claiming a length before the field went NaN. Its
+wording names neither route, so it is true under both definitions and nothing
+here changes when the engine lands the fix — **except this paragraph, which
+should go with it.**
 
 ### The browse view — **the sibling lab did this first**
 
