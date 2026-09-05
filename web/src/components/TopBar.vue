@@ -10,6 +10,7 @@
  */
 import { computed } from 'vue';
 import { ui, useDebug, useNoobVstWebguiFramework, useObject } from '../composables/useResonator.js';
+import LevelStrip from './LevelStrip.vue';
 
 const { connected, history, historyState, stats } = useNoobVstWebguiFramework();
 const debug = useDebug();
@@ -33,6 +34,13 @@ const state = computed(() => (connected.value ? 'live' : 'design mode'));
       -->
       <span v-if="!ui.browsing" class="bar__object">{{ object.label }}</span>
     </div>
+
+    <!--
+      The level readout lives here rather than in the deck, because the deck
+      scrolls at small windows and a meter that can scroll out of sight is not
+      a meter. A resonator with a long decay can climb after the input stops.
+    -->
+    <LevelStrip class="bar__level" />
 
     <div class="bar__tools">
       <span class="bar__state" :class="{ design: !connected }">{{ state }}</span>

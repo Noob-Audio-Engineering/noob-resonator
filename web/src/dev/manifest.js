@@ -339,7 +339,12 @@ function build() {
   });
 
   const facts = s.engine === 'waveguide' ? columnFacts(s) : { metres: 0, loopS: 0 };
-  const info = new Float32Array(INFO_LEN);
+  // **Not zero-filled.** A zero in `limit_gr_db` reads as "the limiter is
+  // taking nothing off", which is a measurement the stand-in never made; NaN
+  // reads as "not computed", and the page's field reader already turns a
+  // non-finite value into `null` and hides the readout that wanted it. An
+  // unset field must be absent, not plausible.
+  const info = new Float32Array(INFO_LEN).fill(NaN);
   const put = (name, v) => {
     const i = INFO_LAYOUT.indexOf(name);
     if (i >= 0) info[i] = v;

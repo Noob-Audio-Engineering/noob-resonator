@@ -20,7 +20,7 @@
  * exactly the readouts that needed them, and each of those says so, rather
  * than the page printing whatever happened to sit at that index.
  */
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import {
   getClient,
   hasParam,
@@ -443,6 +443,57 @@ export function useModes() {
     hasBaseHz: layout.index.base_hz != null,
   });
 }
+
+/**
+ * The input and output levels, and whether either has clipped.
+ *
+ * The stream is four **linear** peaks in one frame, `1.0 = 0 dBFS` — not one
+ * value per channel in decibels, which is what the framework's own meter
+ * component expects, so this reads the frame itself and the panel draws it.
+ *
+ * **A resonator needs a meter more than most effects do.** A long decay and a
+ * high mode count is a bank of resonators being fed continuously; get it
+ * wrong and the output climbs long after the input stopped. The limiter is on
+ * by default and optional, so the one number that matters is how much it is
+ * having to take off — and that is on `info` as `limit_gr_db`.
+ *
+ * The peak hold decays rather than latching, because a bar that only ever
+ * rises is unreadable; **the clip lamp latches**, because a clip you missed is
+ * exactly the one worth knowing about. Clicking it clears it.
+ */
+export function useMeter() {
+  const has = hasStream('meter');
+  const frame = has ? useStreamFrame('meter') : { value: null };
+  const layout = has ? layoutOf('meter') : { index: {} };
+  const held = reactive({ in_l: 0, in_r: 0, out_l: 0, out_r: 0 });
+  const clipped = ref(false);
+
+  /** How much of the held peak survives each frame. Fast enough to follow a decay, slow enough to read. */
+  const HOLD = 0.86;
+  watch(
+    () => frame.value,
+    (f) => {
+      if (!f) return;
+      for (const name of ['in_l', 'in_r', 'out_l', 'out_r']) {
+        const i = layout.index[name];
+        const v = i == null || !Number.isFinite(f[i]) ? 0 : Math.abs(f[i]);
+        held[name] = Math.max(v, held[name] * HOLD);
+        if (name.startsWith('out') && v >= 1) clipped.value = true;
+      }
+    },
+  );
+
+  return reactive({
+    has,
+    live: computed(() => frame.value != null),
+    held,
+    clipped,
+    clear: () => (clipped.value = false),
+  });
+}
+
+/** A linear peak as decibels, floored so silence does not go to negative infinity. */
+export const linToDb = (v) => (v > 0 ? 20 * Math.log10(v) : -120);
 
 /** The engine's own magnitude response: dB against a log frequency axis over the range its meta declares. */
 export function useResponse() {
