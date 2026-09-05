@@ -79,6 +79,36 @@ measurement rather than asserted as a pass. `docs/BENCHMARK.md` carries the
 same figure as its own row, so the dispersion is documented where somebody
 tuning a bright column would look for it.
 
+## Before either wire probe: check which instance is answering
+
+**Both probes below take a port, and the port is not reliably 4246.** The
+standalone falls back when its preferred port is taken, and it does not always
+take the obvious one even when nothing else is running — a fresh instance came
+up on 49152 with the machine otherwise empty. Several standalones can be alive
+at once: two agents building this plug-in have each had one running more than
+once tonight, from different target directories and different commits.
+
+So find the port from the process, not from habit:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name like '%noob-resonator%'" |
+  Select-Object ProcessId, ExecutablePath
+Get-NetTCPConnection -State Listen -OwningProcess <pid> | Select-Object LocalPort
+```
+
+**This is not housekeeping, it is the difference between a measurement and a
+guess.** A read of 4246 landed on somebody else's older build and reported
+that a manifest field had not shipped; it had, and the instance answering was
+simply from before the commit. The same shape caught the panel agent from the
+other end — a stale executable they could not relink, because another
+standalone held it, reporting a parameter list one key short. **A wire probe
+tells you what the thing on that port believes, and nothing about which thing
+that is.**
+
+Two habits that make it a non-issue: build to your own `--target-dir`, so a
+standalone somebody else is running can never block your relink; and check the
+executable path before stopping any process, so you stop your own.
+
 ## `manifest_probe.mjs` — did the page ever connect?
 
 ```sh
