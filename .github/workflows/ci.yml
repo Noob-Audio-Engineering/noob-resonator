@@ -42,7 +42,7 @@ jobs:
 
       - name: Build the SPA (the plug-in embeds web/dist)
         working-directory: web
-        run: npm install && npm run build
+        run: npm install && npm run build && npm test
 
       - name: Plug-in feature
         run: |
