@@ -1,4 +1,4 @@
-# Six things that check the page, and what each one can prove
+# Seven things that check the page, and what each one can prove
 
 These are in the repository rather than in a session scratchpad for the reason
 the engine's `tools/README.md` gives: a check that is lost is a check nobody
@@ -119,6 +119,30 @@ The knob leading the engine mid-gesture is correct and expected — the control 
 what you asked for, the display is what is being synthesised. What is not
 correct is the axis and the partials coming from different states, which this
 catches and which the page cannot fix on its own.
+
+## `pairing.mjs` — does every partial sit where its own ratio says?
+
+```sh
+node tools/pairing.mjs http://localhost:5173/
+```
+
+Samples the display as fast as it will answer, through a fast Tune sweep and
+after it, and reports how often the lowest partial does *not* land on the 1x
+line. **It reports a rate rather than passing or failing**, because the number
+that matters is how often and for how long.
+
+The two halves of that picture arrive on different streams — `info` every block,
+the mode table only when it changes — so a page holding the newest ruler and the
+last bars it received draws one moment's frequencies against another moment's
+fundamental. The engine takes `f0_hz` at the instant it builds the rows now,
+which removed the systematic version; the steady state is exact and about 0.3%
+of frames during a fast gesture are not.
+
+**A page-side attempt to close that remainder is what this probe disproved.**
+Pinning the ruler to whatever the fundamental was when the bars last changed
+looked obviously right and **doubled the rate**, from 0.33% to 0.73% of samples
+— so the ordering is not the one that reasoning suggested, and the change was
+reverted rather than shipped on the strength of the argument for it.
 
 ## `extremes.mjs` — every control at both ends, on every object
 

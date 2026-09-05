@@ -845,6 +845,7 @@ designing is not quietly wrong.
 | `tools/extremes.mjs` | every control at both ends on every object, and whether the instrument comes back — `npm run extremes` |
 | `tools/contract.mjs` | the live manifest against every claim the panel makes on screen; no browser — `npm run contract` |
 | `tools/follows.mjs` | whether the bank keeps up while a knob is turning, and whether the axis and the partials come from the same state — `npm run follows` |
+| `tools/pairing.mjs` | how often a partial does not sit on the ruler drawn beside it; reports a rate, not a verdict — `npm run pairing` |
 | `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
 | `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
 | `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |

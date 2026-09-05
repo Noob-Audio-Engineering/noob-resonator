@@ -15,6 +15,7 @@
     "extremes": "node tools/extremes.mjs",
     "contract": "node tools/contract.mjs",
     "follows": "node tools/follows.mjs",
+    "pairing": "node tools/pairing.mjs",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

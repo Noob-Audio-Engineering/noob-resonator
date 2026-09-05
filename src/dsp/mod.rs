@@ -81,6 +81,39 @@
 //! | `info` | raw | 13 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the fundamental **the published `modes` table was built at**, which is the number every ratio on the display is divided by — deliberately the table’s own moment rather than the current one, because `modes` is sticky and `info` is not, so a page pairing the newest `info` with the last table it received would divide one moment’s frequencies by another’s and draw a ratio-1 partial at 1.2. It follows transpose, fine and the oscillator like the table does, and lags the Tune control while a gesture is in flight — comparing the two is how a page can say it is catching up; `ceiling_hz` is where the bank runs out. `modes_available` is capped at `object::MAX_CANDIDATES`, because an object's mode set is not always finite — a negative `inharm` compresses the whole series under a fixed ratio, and a low enough fundamental puts hundreds of millions of a membrane's partials in the band — so at that value it is a floor on what the object has rather than a total, and `ceiling_hz` is then a real number saying the bank does not reach the top. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
 //! | `response` | curve, sticky | 512 | on change | the engine's own magnitude in dB, 20 Hz … Nyquist log-spaced, normalised to its own peak |
 //!
+//! ## The ruler is in a different stream from the bars
+//!
+//! A page drawing the partials needs a fundamental to divide them by, and it
+//! is `f0_hz` in `info` while the partials are in `modes`. **`f0_hz` is taken
+//! at the instant the `modes` rows are built**, so the two describe one
+//! moment — but they still travel in two frames, and that seam is narrowed
+//! rather than closed.
+//!
+//! It used to be read live, and the fault that exposed is worth keeping:
+//! `modes` is sticky and goes out only when it changes, `info` goes out every
+//! block, so a page holding the newest `info` and the last table it received
+//! divided one moment’s frequencies by another moment’s fundamental. **The
+//! oscillator alone was enough** — no gesture, no user — because it moves the
+//! pitch every block through the retune path while the table is republished
+//! every `READOUT_BLOCKS`. Measured then, LFO at 2 Hz and 12 semitones: a
+//! partial whose ratio is exactly 1 drew at **1.2035×**, and 0.83× the other
+//! way.
+//!
+//! **What is left, measured from the page:** the steady state is exact, and
+//! about **0.33 % of frames during a fast gesture** still draw a partial off
+//! its own ratio, worst 0.809×. That remainder is the render window between
+//! two frames arriving in the browser.
+//!
+//! **It could be closed here** by co-locating the ruler with the rows — a
+//! header float on the `modes` frame, or a ratio column per row — which would
+//! make one frame self-sufficient and the residual structurally impossible.
+//! **Do not, on the strength of that argument alone.** The page tried the
+//! matching fix, pairing the ruler with the bars in the one place that draws
+//! both; the reasoning was clean and it **doubled the rate**, 0.33 % to
+//! 0.73 %. So the arrival order is not what either side assumes, and a
+//! coordinated change to a frozen stream layout would be built on exactly the
+//! assumption that just failed. **Instrument the arrival order first.**
+//!
 //! ## The mode table
 //!
 //! The per-partial overrides live in the **UI store**, under the key `modes`,
