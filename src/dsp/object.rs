@@ -191,6 +191,49 @@ impl Object {
 /// table would run out of usefulness.
 pub const BEAM_MODES: usize = 192;
 
+/// The largest index either coordinate of a partial can take.
+///
+/// A partial is addressed by two `u16`s, on the wire and in a mode override,
+/// so nothing beyond this is reachable however many the object has. [`Walk`]
+/// and [`Shape::available`] both read it, because a walk and a count that
+/// disagree about where an object ends is a bug that hides: one of them is
+/// then describing an object the other does not render.
+pub const WALK_INDEX_MAX: u16 = u16::MAX - 1;
+
+/// The most partials the engine will consider for one configuration.
+///
+/// **Not `MAX_PARTIALS`**, which the manifest already uses for something
+/// else: how many rows the `modes` stream carries. Two things of one name on
+/// one contract is the collision the `modes` parameter already cost this
+/// project once, and a name is cheaper to choose than to unpick.
+///
+/// **An object's mode set is not always finite in this model, and that is not
+/// a mistake in the model.** The Inharm control at negative values maps a
+/// partial to `n / sqrt(1 + |B| n^2)`, which rises to an asymptote at
+/// `1 / sqrt(|B|)` rather than without bound — so at full compression every
+/// partial of an ideal string, all of them, lies below about eighteen times
+/// the fundamental. Squashing the spectrum is exactly what the control is
+/// for. It also means "how many partials are under the ceiling" has no finite
+/// answer there, and the same happens without any inharmonicity at all if the
+/// fundamental is dragged low enough: a square membrane at 1.25 Hz has some
+/// two hundred million partials below 20 kHz.
+///
+/// Neither is a set anything can search, so the engine considers this many
+/// and no more. At `WORK_PER_BLOCK` the incremental search finishes them in
+/// well under a second, and every ordinary setting is far inside it — the
+/// densest thing a user is likely to build, a 110 Hz membrane, has 117,515.
+/// Beyond it `available` reports this number, which is then a floor on what
+/// the object has rather than a total, and `ceiling_hz` says the bank does
+/// not reach the top.
+///
+/// Before this existed the count ran past the end of a `usize`: a string at
+/// negative Inharm published 18,446,744,073,709,551,615 partials, which the
+/// panel printed faithfully, and a membrane in the same state overflowed the
+/// addition outright. The mode search never settled either, because it was
+/// walking a set with no end. Found by the panel agent, driving every control
+/// to both of its ends.
+pub const MAX_CANDIDATES: usize = 1 << 20;
+
 /// The eigenvalues `βL` of a free–free uniform beam: the roots of
 /// `cos β · cosh β = 1`.
 ///
@@ -949,7 +992,12 @@ impl Shape {
         if max_ratio < 1.0 {
             return 0;
         }
-        let cap = self.uninharm(max_ratio);
+        // `uninharm` returns an infinity above the compression's asymptote,
+        // meaning "every partial fits". True, and not a number any of the
+        // counts below can be handed: each one either saturates a cast to
+        // `usize::MAX` or overflows an addition. Bound it here instead, once,
+        // and let every branch below stay arithmetic.
+        let cap = self.uninharm(max_ratio).min(MAX_CANDIDATES as f64);
         let a = self.aspect.clamp(0.05, 20.0) as f64;
         match self.object {
             Object::Beam | Object::Marimba | Object::Tine => {
@@ -959,7 +1007,9 @@ impl Shape {
                 }
                 n
             }
-            Object::String | Object::Pipe | Object::Tube => cap.floor().max(0.0) as usize,
+            Object::String | Object::Pipe | Object::Tube => {
+                (cap.floor().max(0.0) as usize).min(WALK_INDEX_MAX as usize)
+            }
             Object::Membrane | Object::Plate => {
                 let s = 1.0 / a + a;
                 // Membrane: (m²/a + n²a)/s ≤ cap². Plate: the same without
@@ -974,12 +1024,18 @@ impl Shape {
                 let mut m = 1u32;
                 loop {
                     let rem = rhs - (m * m) as f64 / a;
-                    if rem < a {
+                    // A NaN ends the loop rather than running it to the
+                    // bound; `rem < a` alone is false for one.
+                    if rem.is_nan() || rem < a {
                         break;
                     }
-                    total += (rem / a).sqrt().floor() as usize;
+                    let up = (rem / a).sqrt().floor().min(WALK_INDEX_MAX as f64) as usize;
+                    total = total.saturating_add(up);
+                    if total >= MAX_CANDIDATES {
+                        return MAX_CANDIDATES;
+                    }
                     m += 1;
-                    if m > 1 << 20 {
+                    if m > WALK_INDEX_MAX as u32 {
                         break;
                     }
                 }
@@ -1056,6 +1112,10 @@ pub struct Walk {
     i: u16,
     j: u16,
     done: bool,
+    /// How many it has yielded, so it ends at [`MAX_CANDIDATES`] like the count
+    /// does. Without it a compressed series has no end and the mode search
+    /// never settles.
+    yielded: usize,
 }
 
 impl Walk {
@@ -1072,6 +1132,7 @@ impl Walk {
             i: if polar { 0 } else { 1 },
             j: if shape.object.is_2d() { 1 } else { 0 },
             done: max_ratio < 1.0,
+            yielded: 0,
         }
     }
 }
@@ -1080,7 +1141,7 @@ impl Iterator for Walk {
     type Item = Partial;
 
     fn next(&mut self) -> Option<Partial> {
-        if self.done {
+        if self.done || self.yielded >= MAX_CANDIDATES {
             return None;
         }
         let object = self.shape.object;
@@ -1088,7 +1149,7 @@ impl Iterator for Walk {
             let i = self.i;
             let limit = match object {
                 Object::Beam | Object::Marimba | Object::Tine => BEAM_MODES as u16,
-                _ => u16::MAX - 1,
+                _ => WALK_INDEX_MAX,
             };
             if i > limit {
                 self.done = true;
@@ -1102,6 +1163,7 @@ impl Iterator for Walk {
                 return None;
             }
             self.i += 1;
+            self.yielded += 1;
             return Some(Partial {
                 ratio: r as f32,
                 i,
@@ -1116,14 +1178,14 @@ impl Iterator for Walk {
         } else if disc {
             DISC_ORDERS as u16
         } else {
-            u16::MAX - 1
+            WALK_INDEX_MAX
         };
         let j_limit = if round {
             CIRCLE_ZEROS as u16
         } else if disc {
             DISC_ROOTS as u16
         } else {
-            u16::MAX - 1
+            WALK_INDEX_MAX
         };
         loop {
             if self.i >= i_limit {
@@ -1150,6 +1212,7 @@ impl Iterator for Walk {
                 continue;
             }
             self.j += 1;
+            self.yielded += 1;
             return Some(Partial {
                 ratio: r as f32,
                 i,

@@ -1440,6 +1440,158 @@ fn a_walk_is_ordered_within_a_column_and_covers_the_object() {
             );
         }
     }
+
+    // **And in the two states where the object has no end.** A negative
+    // Inharm maps a partial to `n / sqrt(1 + |B| n^2)`, which asymptotes, so
+    // every partial an ideal string has lies under about eighteen times the
+    // fundamental; and a fundamental dragged to 1.25 Hz puts two hundred
+    // million of a membrane's under 20 kHz. Both used to make the count run
+    // past the end of a `usize` and the walk run without end, and the two
+    // have to agree in exactly these cases or one of them is describing an
+    // object the other does not render. Counting a million partials is
+    // cheap; walking them is the slow half and is still under a second.
+    for (object, inharm_b, max_ratio) in [
+        (Object::String, -3.0e-3f32, 90.0f64),
+        (Object::String, 0.0, 16_000.0),
+        (Object::Membrane, -3.0e-3, 90.0),
+        (Object::Membrane, 0.0, 16_000.0),
+        (Object::MembraneRound, -3.0e-3, 90.0),
+        (Object::PlateRound, -3.0e-3, 90.0),
+        (Object::Plate, 0.0, 16_000.0),
+        (Object::Beam, -3.0e-3, 90.0),
+    ] {
+        let shape = Shape {
+            object,
+            inharm_b,
+            ..Shape::default()
+        };
+        let counted = shape.available(max_ratio);
+        let walked = Walk::new(shape, max_ratio).count();
+        assert_eq!(
+            walked, counted,
+            "{object:?} at B={inharm_b:e}, ratio {max_ratio}: walk {walked}, count {counted}"
+        );
+        assert!(
+            counted <= object::MAX_CANDIDATES,
+            "{object:?} reports {counted} partials, past the bound the search can finish"
+        );
+    }
+}
+
+#[test]
+fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
+    // Found live by the panel agent, driving every control to both ends: a
+    // string at negative Inharm published 18,446,744,073,709,551,615
+    // partials, which their page printed faithfully as "18446744073709552.0
+    // k partials". It was an unsigned cast of an infinity — `uninharm`
+    // returns one above the compression's asymptote, meaning "every partial
+    // fits", which is true and is not a number a count can be. A membrane in
+    // the same state overflowed the addition outright, and the mode search
+    // never settled at all because it was walking a set with no end.
+    //
+    // So this drives the fields that are counts of things, over every object
+    // and both ends of everything that can change how many partials there
+    // are, and asserts they can be what they claim: finite, whole, not
+    // negative, and inside what the engine will consider. The panel now
+    // refuses a value that cannot be a count and says it refused, which is
+    // the right guard on their side and is not a fix on mine.
+    for object in 0..OBJECT_NAMES.len() {
+        for tune in [20.0f32, 220.0, 4000.0] {
+            for transpose in [-48.0f32, 0.0, 48.0] {
+                for inharm in [-1.0f32, -0.5, 0.0, 1.0] {
+                    for aspect in [0.05f32, 1.0, 20.0] {
+                        let set = Settings {
+                            object,
+                            tune_hz: tune,
+                            transpose,
+                            inharm,
+                            aspect,
+                            ..Settings::default()
+                        };
+                        let where_ = format!(
+                            "{} at {tune} Hz, {transpose:+} st, inharm {inharm}, ratio {aspect}",
+                            OBJECT_NAMES[object]
+                        );
+                        let shape = set.shape();
+                        let counted = shape.available((20_000.0 / set.base_hz()) as f64);
+                        assert!(
+                            counted <= object::MAX_CANDIDATES,
+                            "{where_}: {counted} partials available"
+                        );
+                        let mut e = Resonator::new(SR);
+                        e.configure(&set);
+                        let mut a = vec![0.0f32; bank::BLOCK];
+                        let mut b = vec![0.0f32; bank::BLOCK];
+                        for _ in 0..8 {
+                            e.process(&mut a, &mut b);
+                        }
+                        let f = e.info_frame();
+                        for (k, field) in [(0usize, "modes_used"), (1, "modes_available")] {
+                            let v = f[k];
+                            assert!(
+                                v.is_finite()
+                                    && v >= 0.0
+                                    && v.fract() == 0.0
+                                    && v <= object::MAX_CANDIDATES as f32,
+                                "{where_}: {field} published {v:e}, which cannot be a count"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_mode_search_settles_even_when_the_object_has_no_end() {
+    // The other half of the same fault, and the one a user would have felt:
+    // the panel sat at "still building the mode table" forever, because the
+    // incremental search walks the object's whole mode set and the set had
+    // no end. Now it is bounded, so every state settles — and the bound is
+    // set so that the worst of them is still a fraction of a second.
+    for (object, inharm, tune, transpose) in [
+        (2usize, -1.0f32, 220.0f32, 0.0f32),
+        (3, -1.0, 220.0, 0.0),
+        (3, 0.0, 20.0, -48.0),
+        (7, -1.0, 220.0, 0.0),
+        (9, -1.0, 220.0, 0.0),
+    ] {
+        let set = Settings {
+            object,
+            tune_hz: tune,
+            transpose,
+            inharm,
+            ..Settings::default()
+        };
+        let mut e = Resonator::new(SR);
+        e.configure(&set);
+        let mut a = vec![0.0f32; bank::BLOCK];
+        let mut b = vec![0.0f32; bank::BLOCK];
+        let mut blocks = 0;
+        while e.info_frame()[10] < 1.0 && blocks < 4_000 {
+            e.process(&mut a, &mut b);
+            blocks += 1;
+        }
+        let seconds = (blocks * bank::BLOCK) as f32 / SR;
+        assert!(
+            blocks < 4_000,
+            "{} at inharm {inharm} never finished building",
+            OBJECT_NAMES[object]
+        );
+        assert!(
+            seconds < 1.0,
+            "{} at inharm {inharm} took {seconds:.2} s to settle",
+            OBJECT_NAMES[object]
+        );
+        // And what it settled on is a real reading, not an absence: the bank
+        // does not reach the top of the band here, so there is a wall to draw.
+        assert!(
+            e.info_frame()[12].is_finite(),
+            "{} at inharm {inharm} truncates and published no ceiling",
+            OBJECT_NAMES[object]
+        );
+    }
 }
 
 #[test]
@@ -2447,4 +2599,53 @@ fn a_clamped_plate_is_held_flat_at_its_rim() {
             "clamped plate mode ({m},{n}) integrates to {mean}"
         );
     }
+}
+
+#[test]
+fn scratch_wedge() {
+    // res-face's repro: Membrane with all three pitch controls at minimum,
+    // then a preset applied one parameter at a time through a real bridge.
+    let (bridge, ix) = build_bridge("noob-resonator-wedge", SR);
+    let mut e = Resonator::new(SR);
+    let mut a = vec![0.0f32; bank::BLOCK];
+    let mut b = vec![0.0f32; bank::BLOCK];
+    let specs = param_specs(false);
+    let audio = bridge.take_audio().expect("audio handle");
+    let set_p = |id: &str, v: f32| {
+        let i = bridge.index_of(id).unwrap();
+        bridge.set_param(i, v);
+    };
+    let mut run = |e: &mut Resonator, n: usize| {
+        for _ in 0..n {
+            let s = read_settings(&audio, &ix);
+            e.configure(&s);
+            e.process(&mut a, &mut b);
+        }
+    };
+    set_p("type", 3.0);
+    set_p("tune", 20.0);
+    set_p("transpose", -48.0);
+    set_p("fine", -50.0);
+    run(&mut e, 200);
+    let f = e.info_frame();
+    println!("after membrane minimum: build={} used={} avail={} f0={}", f[10], f[0], f[1], f[11]);
+
+    // Now the preset, one parameter at a time, the way the page applies it.
+    let nylon = preset::factory().into_iter().find(|p| p.name == "Nylon").unwrap();
+    let vals = preset::settings_values(&nylon.settings);
+    for spec in &specs {
+        if let Some(v) = vals.get(&spec.id) {
+            set_p(&spec.id, v.as_f64().unwrap() as f32);
+            run(&mut e, 1);
+        }
+    }
+    run(&mut e, 400);
+    let f = e.info_frame();
+    let peak = a.iter().chain(b.iter()).fold(0.0f32, |m, x| m.max(x.abs()));
+    println!(
+        "after nylon: build={} used={} avail={} f0={} ceiling={} peak={peak:e}",
+        f[10], f[0], f[1], f[11], f[12]
+    );
+    let info = e.bank().info();
+    println!("  first modes: {:?}", info.iter().take(4).map(|m| (m.i, m.j, m.hz)).collect::<Vec<_>>());
 }

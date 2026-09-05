@@ -784,6 +784,9 @@ designing is not quietly wrong.
 | `previews.js` | forty ratios per object for the browse view's rows, **generated from the engine**; rebuild with `npm run previews`. |
 | `dev/series-table.js` | **dev only** — the same numbers with their mode indices, for the design-mode stand-in to walk. Generated, never hand-edited. |
 | `tools/gen-previews.mjs` | writes both, out of `benchmark --dump series`; refuses if the catalogue and the engine disagree about which objects exist, or if the dump is not in frequency order |
+| `tools/page-sweep.mjs` | every view at every size, and the built bundle — `npm run sweep` |
+| `tools/preset-e2e.mjs` | presets against a running plug-in, which is the only place they prove anything — `npm run presets:e2e` |
+| `tools/extremes.mjs` | every control at both ends on every object, and whether the instrument comes back — `npm run extremes` |
 | `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
 | `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
 | `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |

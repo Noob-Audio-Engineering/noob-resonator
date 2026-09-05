@@ -10,6 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "previews": "node tools/gen-previews.mjs",
+    "sweep": "node tools/page-sweep.mjs",
+    "presets:e2e": "node tools/preset-e2e.mjs",
+    "extremes": "node tools/extremes.mjs",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
