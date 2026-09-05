@@ -150,6 +150,7 @@ pub fn settings_values(s: &Settings) -> Map<String, Value> {
     put("bar_tuning", s.bar_tuning as f32);
     put("bar_third", s.bar_third as f32);
     put("voices", s.voices as f32);
+    put("midi_voices", if s.midi_voices { 1.0 } else { 0.0 });
     for (k, semis) in s.voice_semis.iter().enumerate() {
         put(&format!("voice{}", k + 1), *semis);
     }

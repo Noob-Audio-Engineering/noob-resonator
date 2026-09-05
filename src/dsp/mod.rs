@@ -78,7 +78,7 @@
 //! |---|---|---|---|---|
 //! | `meter` | meter | 4 | every block | `[in_l, in_r, out_l, out_r]`, linear peaks, 1.0 = 0 dBFS |
 //! | `modes` | raw, sticky | 512 | on change | 64 partials × `[i, j, hz, db_l, db_r, t60_s, db_bare, base_hz]`, ascending in `hz`, terminated by `hz = 0`. For a mode bank these are the **loudest** 64 and `(i, j)` are the mode's own indices; for an air column they are the loop's lowest 64 resonances and `i` is the resonance number. `db_bare` is the level the partial would have had with unit mode shapes at both contacts, so the gap between it and `db_l` is the energy a node **removed**; `base_hz` is where the partial sat before Inharm stretched the series. **A partial with an override is always published**, however quiet the override made it |
-//! | `info` | raw | 13 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the fundamental **the published `modes` table was built at**, which is the number every ratio on the display is divided by — deliberately the table’s own moment rather than the current one, because `modes` is sticky and `info` is not, so a page pairing the newest `info` with the last table it received would divide one moment’s frequencies by another’s and draw a ratio-1 partial at 1.2. It follows transpose, fine and the oscillator like the table does, and lags the Tune control while a gesture is in flight — comparing the two is how a page can say it is catching up; `ceiling_hz` is where the bank runs out. The last six are **`voice_available`, one per voice**: how many partials that voice has under the ceiling, NaN for a voice that is not sounding. They are here rather than in a stream of their own because a page reads them in the same breath as the rest, and a second stream would be a second arrival time to reconcile. Publishing only what is *drawn* would leave a voice reduced to a single bar reading as a voice with one partial, which at an ordinary six-voice spread happens to four of six. `modes_available` is capped at `object::MAX_CANDIDATES`, because an object's mode set is not always finite — a negative `inharm` compresses the whole series under a fixed ratio, and a low enough fundamental puts hundreds of millions of a membrane's partials in the band — so at that value it is a floor on what the object has rather than a total, and `ceiling_hz` is then a real number saying the bank does not reach the top. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
+//! | `info` | raw | 25 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz, voice_available[6], voice_source[6]]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the fundamental **the published `modes` table was built at**, which is the number every ratio on the display is divided by — deliberately the table’s own moment rather than the current one, because `modes` is sticky and `info` is not, so a page pairing the newest `info` with the last table it received would divide one moment’s frequencies by another’s and draw a ratio-1 partial at 1.2. It follows transpose, fine and the oscillator like the table does, and lags the Tune control while a gesture is in flight — comparing the two is how a page can say it is catching up; `ceiling_hz` is where the bank runs out. After the per-voice counts come six **`voice_source`** fields: 0 for a pitch set by its parameter, 1 for a note being held, NaN for a voice that is not sounding. A slot recalled from the panel writes the parameters through the ordinary edit path and so reads as 0, which is true — and the page knows it was a slot, because the page did the writing. **`column_m`, `loop_ms` and `open_hz` are the *root voice's* loop**, not the instrument's: a voiced rank has six lengths and one field cannot be all of them, so this publishes voice one's real measurement rather than a composite nothing measured. A face showing it beside more than one voice says whose it is. The last six are **`voice_available`, one per voice**: how many partials that voice has under the ceiling, NaN for a voice that is not sounding. They are here rather than in a stream of their own because a page reads them in the same breath as the rest, and a second stream would be a second arrival time to reconcile. Publishing only what is *drawn* would leave a voice reduced to a single bar reading as a voice with one partial, which at an ordinary six-voice spread happens to four of six. `modes_available` is capped at `object::MAX_CANDIDATES`, because an object's mode set is not always finite — a negative `inharm` compresses the whole series under a fixed ratio, and a low enough fundamental puts hundreds of millions of a membrane's partials in the band — so at that value it is a floor on what the object has rather than a total, and `ceiling_hz` is then a real number saying the bank does not reach the top. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
 //! | `response` | curve, sticky | 512 | on change | the engine's own magnitude in dB, 20 Hz … Nyquist log-spaced, normalised to its own peak |
 //!
 //! ## The ruler is in a different stream from the bars
@@ -240,7 +240,7 @@ pub fn streams(sr: f32) -> Vec<StreamSpec> {
             .name("Readouts")
             .kind(StreamKind::Raw)
             .meta(json!({
-                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz,voice_available[6]"
+                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz,voice_available[6],voice_source[6]"
             })),
         StreamSpec::new("response", RESPONSE_POINTS)
             .name("Response")
@@ -337,6 +337,14 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
         // page applying one writes these six through the ordinary edit path,
         // exactly as it applies a preset. Generate, then edit — and there is
         // no state in which it could generate *instead*.
+        // **A toggle, not a mode menu.** The pitches are always the six
+        // parameters; this only says whether held notes override them. A
+        // mode menu would have had a state in which the parameters are not
+        // the pitches, which is the shape we already refused for the chord.
+        ParamSpec::new("midi_voices", "MIDI Voices")
+            .toggle()
+            .default(if d.midi_voices { 1.0 } else { 0.0 })
+            .group("chord"),
         ParamSpec::new("voices", "Voices")
             .range(1.0, CHORD_VOICES as f32)
             .steps(CHORD_VOICES as u32)
@@ -584,6 +592,7 @@ pub fn object_meta() -> Value {
         // roots and each root gets this object's own series.
         if object.can_voice() {
             uses.push("voices");
+            uses.push("midi_voices");
             for id in VOICE_IDS {
                 uses.push(id);
             }
@@ -708,6 +717,7 @@ pub struct ParamIx {
     pub bar_tuning: usize,
     pub bar_third: usize,
     pub voices: usize,
+    pub midi_voices: usize,
     /// One per voice, so the audio thread never looks a pitch up by string.
     pub voice: [usize; CHORD_VOICES],
     pub radius: usize,
@@ -762,6 +772,7 @@ pub fn param_index(s: &NoobVstWebguiFramework) -> ParamIx {
         bar_tuning: ix("bar_tuning"),
         bar_third: ix("bar_third"),
         voices: ix("voices"),
+        midi_voices: ix("midi_voices"),
         voice: std::array::from_fn(|k| ix(VOICE_IDS[k])),
         radius: ix("radius"),
         opening: ix("opening"),
@@ -818,6 +829,7 @@ pub fn read_settings(audio: &AudioHandle, ix: &ParamIx) -> Settings {
         bar_tuning: p(ix.bar_tuning).round().clamp(0.0, 1.0) as usize,
         bar_third: p(ix.bar_third).round().clamp(0.0, 1.0) as usize,
         voices: p(ix.voices).round().clamp(1.0, CHORD_VOICES as f32) as usize,
+        midi_voices: on(ix.midi_voices),
         voice_semis: {
             let mut v = [0.0f32; CHORD_VOICES];
             for (k, out) in v.iter_mut().enumerate() {
@@ -1035,6 +1047,8 @@ pub fn bridge_meta(sr: f32, standalone: bool) -> Value {
         "chord_voices": CHORD_VOICES,
         "voice_ids": VOICE_IDS,
         "chords": chords_json(),
+        "slots_key": SLOTS_KEY,
+        "slot_notes": SLOT_NOTES,
         "response_points": RESPONSE_POINTS,
         "spread_max_cents": SPREAD_MAX_CENTS,
         "c_air": guide::C_AIR,
@@ -1049,15 +1063,122 @@ pub fn bridge_meta(sr: f32, standalone: bool) -> Value {
 /// Attach a mode table to a bridge, so that every page write reaches the
 /// audio thread and whatever the host restored is applied before the first
 /// block.
-pub fn attach_mode_table(bridge: &NoobVstWebguiFramework, table: Arc<ModeTable>) {
+/// The six stored chords, readable from the audio thread.
+///
+/// **Storage is the page's and recall is the engine's**, which is not a
+/// division of labour but a fact about where each can act: only the engine
+/// sees MIDI, and only the editor can move a parameter in a way the host
+/// records. So the page owns saving, naming and the panel buttons — writing
+/// the pitches through the ordinary edit path when a button is pressed — and
+/// this exists so that the *same* six chords can also be recalled from the
+/// six notes NI document, without the audio thread touching a parameter.
+pub struct SlotTable {
+    /// `CHORD_VOICES + 1` words per slot: the pitches, then how many voices.
+    cells: Vec<AtomicU32>,
+}
+
+/// The notes that recall the six slots: C2, D2, E2, F2, G2, A2.
+///
+/// Taken from the device the research describes, because a player who knows
+/// one should not have to learn another set, and because any six notes are
+/// arbitrary — these at least have a precedent.
+pub const SLOT_NOTES: [u8; CHORD_VOICES] = [36, 38, 40, 41, 43, 45];
+
+/// Where the page keeps the six chords.
+pub const SLOTS_KEY: &str = "slots";
+
+impl Default for SlotTable {
+    fn default() -> Self {
+        SlotTable::new()
+    }
+}
+
+impl SlotTable {
+    pub fn new() -> SlotTable {
+        SlotTable {
+            cells: (0..CHORD_VOICES * (CHORD_VOICES + 1))
+                .map(|_| AtomicU32::new(0))
+                .collect(),
+        }
+    }
+
+    /// Read slot `k`, or `None` if it has never been stored.
+    pub fn get(&self, k: usize) -> Option<([f32; CHORD_VOICES], usize)> {
+        if k >= CHORD_VOICES {
+            return None;
+        }
+        let base = k * (CHORD_VOICES + 1);
+        let voices = self.cells[base + CHORD_VOICES].load(Ordering::Relaxed) as usize;
+        if voices == 0 || voices > CHORD_VOICES {
+            return None;
+        }
+        let mut semis = [0.0f32; CHORD_VOICES];
+        for (v, out) in semis.iter_mut().enumerate() {
+            *out = f32::from_bits(self.cells[base + v].load(Ordering::Relaxed));
+            if !out.is_finite() {
+                return None;
+            }
+        }
+        Some((semis, voices))
+    }
+
+    /// Load `{"slots":[{"semis":[…],"voices":3}, …]}`.
+    ///
+    /// Anything malformed leaves that slot unstored rather than half stored:
+    /// a slot that recalls a chord nobody saved is worse than one that does
+    /// nothing.
+    pub fn load_json(&self, v: &Value) {
+        let list = v.get("slots").and_then(|s| s.as_array());
+        for k in 0..CHORD_VOICES {
+            let base = k * (CHORD_VOICES + 1);
+            let entry = list.and_then(|l| l.get(k));
+            let semis = entry
+                .and_then(|e| e.get("semis"))
+                .and_then(|s| s.as_array());
+            let count = entry
+                .and_then(|e| e.get("voices"))
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0) as usize;
+            let ok = semis.map(|s| s.len() >= count).unwrap_or(false)
+                && (1..=CHORD_VOICES).contains(&count);
+            if !ok {
+                self.cells[base + CHORD_VOICES].store(0, Ordering::Relaxed);
+                continue;
+            }
+            let semis = semis.expect("checked");
+            for v in 0..CHORD_VOICES {
+                let x = semis
+                    .get(v)
+                    .and_then(|n| n.as_f64())
+                    .unwrap_or(0.0)
+                    .clamp(-24.0, 36.0) as f32;
+                self.cells[base + v].store(x.to_bits(), Ordering::Relaxed);
+            }
+            self.cells[base + CHORD_VOICES].store(count as u32, Ordering::Relaxed);
+        }
+    }
+}
+
+pub fn attach_mode_table(
+    bridge: &NoobVstWebguiFramework,
+    table: Arc<ModeTable>,
+    slots: Arc<SlotTable>,
+) {
     if let Some(v) = bridge.store_get(MODES_KEY) {
         table.load_json(&v);
     }
+    if let Some(v) = bridge.store_get(SLOTS_KEY) {
+        slots.load_json(&v);
+    }
     let t = table.clone();
-    bridge.set_store_hook(Some(Arc::new(move |key: &str, value: &Value| {
-        if key == MODES_KEY {
-            t.load_json(value);
-        }
+    let s = slots.clone();
+    // **One hook, both keys.** The bridge holds a single store hook, so a
+    // second `set_store_hook` would silently replace the first — which is
+    // the kind of quiet displacement this project has spent a day finding.
+    bridge.set_store_hook(Some(Arc::new(move |key: &str, value: &Value| match key {
+        MODES_KEY => t.load_json(value),
+        SLOTS_KEY => s.load_json(value),
+        _ => {}
     })));
 }
 
@@ -1065,8 +1186,126 @@ pub fn attach_mode_table(bridge: &NoobVstWebguiFramework, table: Arc<ModeTable>)
 /// drive it the same way: [`configure`](Processor::configure) with a fresh
 /// snapshot, [`process`](Processor::process) the block,
 /// [`publish`](Processor::publish) the streams.
+/// Which MIDI note is holding each voice, and in what order they arrived.
+///
+/// **Six pitches from six held notes**, which is the capability a resonator
+/// tuned from one note does not have: a chord played into an object is a
+/// different instrument from a note played into it, and the bank already
+/// holds independent modes, so a chord is several roots.
+///
+/// Assignment is **stable**: a note keeps the voice it was given until it is
+/// released, so holding a chord and adding one note does not move the notes
+/// already sounding onto different voices. That matters because a per-mode
+/// override is keyed to a voice — reshuffling under a held chord would move
+/// a user's edits to partials they never touched, which is the same fault as
+/// keying an edit by its row in the display.
+#[derive(Clone, Copy, Debug)]
+pub struct Voicing {
+    /// The MIDI note holding each voice, or `None` if it is free.
+    held: [Option<u8>; CHORD_VOICES],
+    /// A chord recalled from a slot by one of [`SLOT_NOTES`], which stands
+    /// until a played note replaces it.
+    slot: Option<([f32; CHORD_VOICES], usize)>,
+}
+
+impl Default for Voicing {
+    fn default() -> Self {
+        Voicing {
+            held: [None; CHORD_VOICES],
+            slot: None,
+        }
+    }
+}
+
+impl Voicing {
+    /// Give a note the lowest free voice. A note already held keeps its
+    /// voice; with every voice taken the note is ignored rather than
+    /// stealing, because stealing under a held chord is the reshuffle this
+    /// type exists to avoid.
+    pub fn note_on(&mut self, note: u8) {
+        // A played note replaces a recalled chord: the keyboard is the more
+        // recent instruction and two sources of pitch at once is the
+        // ambiguity a mode menu would have created.
+        self.slot = None;
+        if self.held.contains(&Some(note)) {
+            return;
+        }
+        if let Some(slot) = self.held.iter_mut().find(|h| h.is_none()) {
+            *slot = Some(note);
+        }
+    }
+
+    pub fn note_off(&mut self, note: u8) {
+        for h in self.held.iter_mut() {
+            if *h == Some(note) {
+                *h = None;
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.held = [None; CHORD_VOICES];
+        self.slot = None;
+    }
+
+    /// Recall a stored chord. Releases anything held, because the slot is now
+    /// the instruction.
+    pub fn recall(&mut self, chord: ([f32; CHORD_VOICES], usize)) {
+        self.held = [None; CHORD_VOICES];
+        self.slot = Some(chord);
+    }
+
+    /// Whether a recalled chord is what is sounding.
+    pub fn from_slot(&self) -> bool {
+        self.slot.is_some()
+    }
+
+    /// How many voices are held.
+    pub fn count(&self) -> usize {
+        if let Some((_, n)) = self.slot {
+            return n;
+        }
+        self.held.iter().filter(|h| h.is_some()).count()
+    }
+
+    /// Whether voice `v` is being held from MIDI.
+    pub fn is_held(&self, v: usize) -> bool {
+        self.held.get(v).copied().flatten().is_some()
+    }
+
+    /// The semitone offsets a held chord asks for, relative to `root_hz`.
+    ///
+    /// **Relative to the root rather than to a fixed note**, so a held note
+    /// sounds at its own pitch whatever Tune is set to — which is what makes
+    /// it playable — and the voice offsets stay the same quantity the
+    /// parameters carry, so nothing downstream needs to know where they came
+    /// from.
+    pub fn semis(&self, root_hz: f32, out: &mut [f32; CHORD_VOICES]) -> usize {
+        // A recalled chord is already in semitones from the root, so it is
+        // the pitches themselves rather than notes to convert.
+        if let Some((semis, n)) = self.slot {
+            *out = semis;
+            return n;
+        }
+        let root = root_hz.max(1e-3);
+        let mut n = 0;
+        for (v, held) in self.held.iter().enumerate() {
+            if let Some(note) = held {
+                let hz = 440.0 * 2f32.powf((*note as f32 - 69.0) / 12.0);
+                out[v] = 12.0 * (hz / root).log2();
+                n = n.max(v + 1);
+            }
+        }
+        n
+    }
+}
+
 pub struct Processor {
     engine: Resonator,
+    /// Which voices MIDI is holding, when the object is taking its pitches
+    /// from notes.
+    voicing: Voicing,
+    slots: Arc<SlotTable>,
     table: Arc<ModeTable>,
     table_gen: u32,
     edits: [ModeEdit; MAX_EDITS],
@@ -1083,6 +1322,8 @@ impl Processor {
     pub fn with_table(sr: f32, table: Arc<ModeTable>) -> Processor {
         Processor {
             engine: Resonator::new(sr),
+            voicing: Voicing::default(),
+            slots: Arc::new(SlotTable::new()),
             table,
             table_gen: u32::MAX,
             edits: [ModeEdit::default(); MAX_EDITS],
@@ -1119,7 +1360,65 @@ impl Processor {
             self.table.read(&mut self.edits);
             self.engine.set_edits(&self.edits);
         }
-        self.engine.configure(s);
+        // **Held notes override the voice parameters; they never write
+        // them.** A parameter the audio thread wrote behind the host's back
+        // is a gesture nothing recorded and an automation lane that fights
+        // the player, so MIDI stays an override and the manual pitches are
+        // exactly where the user left them when the keys come up.
+        let mut s = *s;
+        if s.midi_voices && s.object_can_voice() {
+            let held = self.voicing.count();
+            if held > 0 {
+                let mut semis = s.voice_semis;
+                let n = self.voicing.semis(s.base_hz(), &mut semis);
+                s.voice_semis = semis;
+                s.voices = n.max(1);
+            }
+        }
+        self.engine.configure(&s);
+        self.engine.set_held(if s.midi_voices {
+            self.voicing
+        } else {
+            Voicing::default()
+        });
+    }
+
+    /// A note arrived. Ignored unless the object is taking its pitches from
+    /// MIDI, so a stray note cannot silently retune a manual chord.
+    pub fn note_on(&mut self, note: u8) {
+        // **A slot note recalls; every other note plays.** The six are the
+        // ones the research documents, so a player who knows that device does
+        // not have to learn a second set. A slot note with nothing stored in
+        // it does nothing at all rather than silencing the instrument.
+        if let Some(k) = SLOT_NOTES.iter().position(|n| *n == note) {
+            if let Some(chord) = self.slots.get(k) {
+                self.voicing.recall(chord);
+            }
+            return;
+        }
+        self.voicing.note_on(note);
+    }
+
+    /// The six stored chords, so the host can attach the page's store to them.
+    pub fn slots(&self) -> &Arc<SlotTable> {
+        &self.slots
+    }
+
+    pub fn set_slots(&mut self, slots: Arc<SlotTable>) {
+        self.slots = slots;
+    }
+
+    pub fn note_off(&mut self, note: u8) {
+        // Releasing a slot note does not un-recall the chord: a recall is an
+        // instruction, not a key being held down.
+        if SLOT_NOTES.contains(&note) {
+            return;
+        }
+        self.voicing.note_off(note);
+    }
+
+    pub fn notes_off(&mut self) {
+        self.voicing.clear();
     }
 
     pub fn process(&mut self, l: &mut [f32], r: &mut [f32]) {

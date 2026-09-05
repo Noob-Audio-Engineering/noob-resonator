@@ -179,6 +179,8 @@ body {
  * not a caution.
  */
 .pick__voicing { font-size: 11px; color: var(--res-brass); letter-spacing: 0.02em; }
+/* Six voices are six air columns; the readout says so rather than going blank. */
+.md__many { color: var(--res-dim); }
 
 /* --------------------------------------------------------------------------
  * Select: which partials survive

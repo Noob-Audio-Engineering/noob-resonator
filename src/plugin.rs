@@ -170,6 +170,7 @@ pub struct NoobResonatorParams {
     /// How many of the chord's voices sound, and each voice's pitch in
     /// semitones from the root. Six pitches and no chord: see `dsp::mod`.
     pub voices: IntParam,
+    pub midi_voices: BoolParam,
     pub voice: [IntParam; CHORD_VOICES],
     pub radius: FloatParam,
     pub opening: FloatParam,
@@ -255,6 +256,7 @@ impl Default for NoobResonatorParams {
                 .with_value_to_string(formatters::v2s_f32_rounded(2)),
             bar_tuning: EnumParam::new("Bar Tuning", BarTuningParam::Marimba),
             bar_third: EnumParam::new("Third Partial", BarThirdParam::Woodhouse),
+            midi_voices: BoolParam::new("MIDI Voices", d.midi_voices),
             voices: IntParam::new(
                 "Voices",
                 d.voices as i32,
@@ -415,6 +417,7 @@ unsafe impl Params for NoobResonatorParams {
             (g("bar_tuning"), self.bar_tuning.as_ptr(), g("body")),
             (g("bar_third"), self.bar_third.as_ptr(), g("body")),
             (g("voices"), self.voices.as_ptr(), g("chord")),
+            (g("midi_voices"), self.midi_voices.as_ptr(), g("chord")),
             (g("voice1"), self.voice[0].as_ptr(), g("chord")),
             (g("voice2"), self.voice[1].as_ptr(), g("chord")),
             (g("voice3"), self.voice[2].as_ptr(), g("chord")),
@@ -483,6 +486,7 @@ impl NoobResonatorParams {
             bar_tuning: self.bar_tuning.value() as usize,
             bar_third: self.bar_third.value() as usize,
             voices: self.voices.value() as usize,
+            midi_voices: self.midi_voices.value(),
             voice_semis: std::array::from_fn(|k| self.voice[k].value() as f32),
             radius_mm: self.radius.value(),
             opening: self.opening.value() / 100.0,
@@ -546,11 +550,14 @@ impl Default for NoobResonator {
             |b| b.meta(dsp::bridge_meta(48_000.0, false)),
         );
         let table = Arc::new(ModeTable::new());
-        dsp::attach_mode_table(host.bridge(), table.clone());
+        let slots = Arc::new(dsp::SlotTable::new());
+        dsp::attach_mode_table(host.bridge(), table.clone(), slots.clone());
+        let mut processor = Processor::with_table(48_000.0, table.clone());
+        processor.set_slots(slots);
         NoobResonator {
             params,
             host,
-            processor: Processor::with_table(48_000.0, table.clone()),
+            processor,
             table,
         }
     }
@@ -561,6 +568,11 @@ impl Plugin for NoobResonator {
     noob_identity!();
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = stereo_or_mono_io!();
+    /// **Notes in, so a chord can be played into the object.** Basic is
+    /// enough: this takes note on and off and nothing else, because a voice
+    /// is a pitch rather than a played note — there is no envelope to
+    /// retrigger and no velocity to respond to.
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
@@ -607,8 +619,20 @@ impl Plugin for NoobResonator {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Notes first, so a chord struck this block is voiced this block
+        // rather than one block late. Timing within the block is ignored on
+        // purpose: a voice is a tuning, not a triggered note, so moving it a
+        // few samples earlier changes nothing anybody can hear.
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::NoteOn { note, .. } => self.processor.note_on(note),
+                NoteEvent::NoteOff { note, .. } => self.processor.note_off(note),
+                NoteEvent::Choke { note, .. } => self.processor.note_off(note),
+                _ => {}
+            }
+        }
         self.processor.configure(&self.params.settings());
         let channels = buffer.channels();
         let slices = buffer.as_slice();

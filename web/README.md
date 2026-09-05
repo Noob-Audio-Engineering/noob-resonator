@@ -403,6 +403,101 @@ loading a preset with an empty `modes` clears them again; moving a control
 raises the edited dot; and a saved user preset survives a page reload, which is
 what proves it is in the plug-in state rather than in the page.
 
+### Chord tuning — a second way to fill the same table
+
+**Every object answers *what is it made of*. The voices answer *what is it
+tuned to*.** An object model is safe about timbre and dangerous about pitch: it
+always sounds like a thing, but tune it wrong against the track and it fights. A
+set of tuned voices is the reverse — safe about pitch and indifferent to timbre,
+because you told it the chord. Those are two different instruments, and a mode
+table that can be filled either way is one plug-in that is both.
+
+**A voice is a root, not a partial.** Each one gets the object's own series, so
+six voices on a Beam is six beams a fifth apart rather than something that is no
+longer a beam. That is why the voices sit *beside* the object rather than being
+an object of their own, and why the object bar states two facts: what it is made
+of, and what it is tuned to.
+
+**At one voice the panel is indistinguishable from before the feature existed.**
+The engine encodes the voice in `j`, which a one-dimensional object left at
+zero, so one voice is bit-identical on the wire — and the face matches: the same
+`Partial n` labels, the same ratio axis, and the object bar says nothing at all.
+A line reading *"one voice"* would be the panel announcing a feature rather than
+stating a fact about the sound. The way in stays, because a feature nobody can
+reach is not one: **a control is not the display claiming a state.**
+
+**More than one voice means the axis is frequency.** A ratio is a number divided
+by the fundamental, and a chord has no single fundamental to divide by — voice
+two's root would read `1.498×`, which is a true number over the wrong
+denominator. So the octave lines keep their positions and stop calling
+themselves ratios.
+
+**The labels follow what the index means, never what it contains.** `j` is a
+lattice coordinate on a surface and a voice on a line, and reading it as
+*not zero, so it is a pair* put `Partial 1` and `Mode (1, 1)` in one list about
+two things of identical kind — and told a reader that a beam has a second
+dimension. Whether more than one voice is sounding is derived from **the drawn
+rows** rather than from the `voices` control, so it cannot disagree with the
+picture it labels; naming rows from one source while drawing them from another
+is the ruler-and-bars fault in a new costume.
+
+**Which partials belong to which voice is the hard drawing problem, and focus is
+the answer.** Five schemes were rendered side by side against real series data.
+Colour per voice is out and the reason is this display's own palette: opacity
+already means something here — a held partial and a dead one are drawn by it — so
+a low voice read as *quiet* rather than *first*. A lane per voice is unambiguous
+and costs six times the height, which is impossible at the 86 px the display has
+at 900 × 520. **One voice in focus, the rest dimmed rather than hidden**, was the
+only scheme that stayed legible where the voices interleave, and it costs no
+information. Each voice also carries a marker at its lowest drawn partial,
+always on, which names the sounding pitches without claiming to attribute every
+bar.
+
+**The markers are laid out in frequency order and keep their own numbers**, so
+they read `1 2 4 3 5 6` when the chord puts voice 4 below voice 3. Position is
+presentation; the number is identity. Renumbering to tidy the display would move
+the voice an override is keyed to — the same rule that keys the markup on the
+mode pair.
+
+**A chord can make a sounding voice invisible, and that was worth measuring.**
+The stream carries the loudest sixty-four across the whole table, so it divides
+between the voices rather than multiplying — about eleven each at equal levels.
+At an ordinary voicing it does not divide evenly at all:
+
+    a 6 dB ladder across six voices, partials drawn per voice
+      beam      21/17/15/7/3/1
+      string    49/12/3/0/0/0
+      membrane  61/3/0/0/0/0
+
+Three of six sounding voices with no bars at all on a string; four on a
+membrane. The engine now **always publishes each sounding voice's loudest
+partial**, which is the rule it already applied to edited modes for the same
+reason. And because one bar then reads as *this voice has one partial* rather
+than *you are seeing one of sixty-four*, it also publishes **how many each voice
+has**, so a thin voice can say which it is and how much of it is off screen.
+
+**Six voices on an air column are six air columns.** One `column_m` cannot be
+all of them, so above one voice the engine publishes nothing and the readout
+says *3 air columns, one per voice* rather than going blank or passing off the
+first voice's length as the answer. A label reading *"(voice 1 of 3)"* is a
+weaker defence than not making the claim.
+
+**The chord menu writes the pitches and is never a parameter.** The engine
+publishes sixteen chords in `meta.chords` and the page applies one by writing
+`voices` and the voice pitches through the ordinary edit path, exactly as it
+applies a preset. That is *generate, then edit* enforced structurally rather
+than by convention: a chord parameter would be a second place a voice's pitch is
+decided, and the moment somebody nudged one voice the two would disagree about
+what the chord is with no way to say which is true. **Which chord is showing is
+derived from the live pitches rather than remembered**, so nudging a voice reads
+as *custom* immediately, with no state to go stale. The semitones come from the
+engine, so nothing on the page computes an interval.
+
+**The voicings are for a resonator rather than a keyboard**, which is the
+engine's call and worth recording: `Major` is `[0, 7, 16]` — the third an octave
+up — because six fundamentals inside four semitones is one thick note rather
+than a chord.
+
 ### The browse view — **the sibling lab did this first**
 
 Choosing an object is a view, one per row, grouped by family, with a "Good
@@ -885,6 +980,8 @@ designing is not quietly wrong.
 | `components/EngineDiagram.vue` | the two engines, drawn, because the prose was not landing |
 | `components/PresetBrowser.vue` | presets, one per row, grouped by object, with the A/B pairs marked |
 | `composables/usePresets.js` | the preset format, loading, saving and the edited-since diff |
+| `composables/useChords.js` | the chord menu, applied through the edit path; which chord is showing, derived from the live pitches |
+| `components/ChordBrowser.vue` | the sixteen chords, one row each, with their semitones and the notes they land on |
 | `components/LevelStrip.vue` | in, out, clip and the limiter's gain reduction |
 | `components/TypeBrowser.vue` | the browse view |
 | `components/SeriesPreview.vue` | one object's series, drawn small, as its row's preview |

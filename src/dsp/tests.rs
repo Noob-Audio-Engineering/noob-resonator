@@ -1330,7 +1330,7 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
     );
     // Thirteen readouts and one available count per voice, appended so every
     // existing index stays where it was.
-    assert_eq!(INFO_LEN, 13 + CHORD_VOICES);
+    assert_eq!(INFO_LEN, 13 + 2 * CHORD_VOICES);
     // `modes` is the stream; the parameter that spends the budget is
     // `mode_budget`. Two things called the same thing on one wire is a
     // collision somebody will hit, and the panel agent hit it.
@@ -2201,6 +2201,244 @@ fn a_voice_says_how_many_partials_it_has_and_not_only_how_many_are_drawn() {
 }
 
 #[test]
+fn a_held_chord_sounds_at_the_notes_that_are_held() {
+    // **The capability a resonator tuned from one note does not have.** Six
+    // held notes set six pitches, and each voice has to come out at its own
+    // note's frequency whatever Tune is set to — otherwise it is a transposer
+    // rather than an instrument you can play a chord into.
+    //
+    // Measured through the whole path: notes into the processor, settings
+    // through the parameter struct, partials out of the published table.
+    for root in [55.0f32, 220.0, 440.0] {
+        let mut proc = Processor::new(SR);
+        // C major seven, played rather than dialled.
+        let notes = [60u8, 64, 67, 71];
+        for n in notes {
+            proc.note_on(n);
+        }
+        let set = Settings {
+            object: 2, // String
+            tune_hz: root,
+            midi_voices: true,
+            decay_s: 3.0,
+            ..Settings::default()
+        };
+        let mut l = vec![0.0f32; bank::BLOCK];
+        let mut r = vec![0.0f32; bank::BLOCK];
+        for _ in 0..600 {
+            proc.configure(&set);
+            proc.process(&mut l, &mut r);
+        }
+        let frame = proc.engine().modes_frame().to_vec();
+        for (v, note) in notes.iter().enumerate() {
+            let want = 440.0 * 2f32.powf((*note as f32 - 69.0) / 12.0);
+            // The voice's own fundamental is its mode 1.
+            let got = frame
+                .chunks(MODE_FIELDS)
+                .find(|row| row[2] > 0.0 && row[1] as usize == v && row[0] == 1.0)
+                .map(|row| row[2]);
+            let got = got.unwrap_or_else(|| {
+                panic!("at root {root}, voice {v} has no fundamental in the published table")
+            });
+            let cents = 1200.0 * (got / want).log2();
+            assert!(
+                cents.abs() < 1.0,
+                "at root {root} Hz, note {note} sounds at {got:.2} Hz and should be {want:.2} \
+                 ({cents:+.2} cents)"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_held_note_keeps_its_voice_when_another_arrives() {
+    // Assignment has to be **stable**, because a per-mode override is keyed
+    // to a voice: reshuffling under a held chord would move a user's edits
+    // onto partials they never touched, which is the same fault as keying an
+    // edit by its row in the display. So holding a chord and adding a note
+    // must not move the notes already down.
+    let mut v = Voicing::default();
+    v.note_on(60);
+    v.note_on(67);
+    let mut before = [0.0f32; CHORD_VOICES];
+    v.semis(220.0, &mut before);
+    v.note_on(64);
+    let mut after = [0.0f32; CHORD_VOICES];
+    v.semis(220.0, &mut after);
+    assert_eq!(
+        before[0], after[0],
+        "the first held note moved when a third arrived"
+    );
+    assert_eq!(
+        before[1], after[1],
+        "the second held note moved when a third arrived"
+    );
+    assert_eq!(v.count(), 3);
+
+    // Releasing frees exactly that voice and leaves the others where they are.
+    v.note_off(60);
+    assert!(!v.is_held(0), "the released note still holds its voice");
+    assert!(v.is_held(1) && v.is_held(2), "a release moved the others");
+
+    // A seventh note with every voice taken is ignored rather than stealing,
+    // because stealing is the reshuffle this type exists to prevent.
+    let mut full = Voicing::default();
+    for n in 60..66u8 {
+        full.note_on(n);
+    }
+    assert_eq!(full.count(), CHORD_VOICES);
+    full.note_on(72);
+    assert_eq!(full.count(), CHORD_VOICES, "a seventh note took a voice");
+    assert!(full.is_held(0), "a seventh note stole the first voice");
+}
+
+#[test]
+fn midi_overrides_the_voice_pitches_and_never_writes_them() {
+    // A parameter the audio thread wrote behind the host's back is a gesture
+    // nothing recorded and an automation lane that fights the player. So
+    // held notes override, and the manual pitches are exactly where the user
+    // left them when the keys come up.
+    let manual = [0.0f32, 3.0, 8.0, 0.0, 0.0, 0.0];
+    let set = Settings {
+        object: 2,
+        tune_hz: 220.0,
+        voices: 3,
+        midi_voices: true,
+        voice_semis: manual,
+        ..Settings::default()
+    };
+    let mut proc = Processor::new(SR);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    proc.note_on(72);
+    proc.note_on(79);
+    for _ in 0..300 {
+        proc.configure(&set);
+        proc.process(&mut l, &mut r);
+    }
+    // The settings the caller holds are untouched: the override lives on the
+    // copy the engine was configured with.
+    assert_eq!(set.voice_semis, manual, "MIDI wrote the voice parameters");
+
+    // While held, the published source says so; the free voices report
+    // manual, and a voice that is not sounding reports NaN.
+    let f = proc.engine().info_frame();
+    assert_eq!(f[19], 1.0, "voice 0 is held and does not say so");
+    assert_eq!(f[20], 1.0, "voice 1 is held and does not say so");
+    for v in 2..CHORD_VOICES {
+        assert!(
+            f[19 + v].is_nan(),
+            "voice {v} is not sounding and reports {}",
+            f[19 + v]
+        );
+    }
+
+    // Keys up: the object returns to the manual chord rather than to silence
+    // or to whatever was last played.
+    proc.notes_off();
+    for _ in 0..300 {
+        proc.configure(&set);
+        proc.process(&mut l, &mut r);
+    }
+    let f = proc.engine().info_frame();
+    for v in 0..3 {
+        assert_eq!(
+            f[19 + v],
+            0.0,
+            "voice {v} still reads as held after the keys came up"
+        );
+    }
+    let frame = proc.engine().modes_frame().to_vec();
+    let third = frame
+        .chunks(MODE_FIELDS)
+        .find(|row| row[2] > 0.0 && row[1] as usize == 1 && row[0] == 1.0)
+        .map(|row| row[2])
+        .expect("voice 1 has a fundamental");
+    let want = 220.0 * 2f32.powf(3.0 / 12.0);
+    assert!(
+        (1200.0 * (third / want).log2()).abs() < 1.0,
+        "after the keys came up voice 1 is at {third:.2} Hz, not the manual {want:.2}"
+    );
+}
+
+#[test]
+fn a_slot_note_recalls_a_stored_chord_and_a_played_note_replaces_it() {
+    // **Both recall paths the research documents**, and the division the lead
+    // ruled: the page stores and names the six chords, the engine recalls
+    // them from the six notes, because only the engine sees MIDI and only the
+    // editor can move a parameter in a way the host records.
+    let slots = Arc::new(SlotTable::new());
+    slots.load_json(&json!({
+        "slots": [
+            { "semis": [0.0, 7.0, 16.0, 0.0, 0.0, 0.0], "voices": 3 },
+            { "semis": [0.0, 5.0, 10.0, 15.0, 0.0, 0.0], "voices": 4 }
+        ]
+    }));
+    assert!(slots.get(0).is_some() && slots.get(1).is_some());
+    // A slot nobody stored recalls nothing rather than a chord of zeros.
+    for k in 2..CHORD_VOICES {
+        assert!(slots.get(k).is_none(), "slot {k} was never stored");
+    }
+
+    let mut v = Voicing::default();
+    v.recall(slots.get(0).unwrap());
+    assert!(v.from_slot());
+    assert_eq!(v.count(), 3);
+    let mut semis = [0.0f32; CHORD_VOICES];
+    assert_eq!(v.semis(220.0, &mut semis), 3);
+    assert_eq!(semis[1], 7.0, "the recalled fifth is not a fifth");
+
+    // A played note is the more recent instruction and replaces the recall,
+    // rather than the two fighting over the pitches.
+    v.note_on(72);
+    assert!(!v.from_slot(), "a played note left the slot in charge");
+    assert_eq!(v.count(), 1);
+
+    // And through the processor, which is where the notes actually arrive:
+    // a slot note recalls, and releasing it does not un-recall, because a
+    // recall is an instruction rather than a key held down.
+    let mut proc = Processor::new(SR);
+    proc.set_slots(slots.clone());
+    proc.note_on(SLOT_NOTES[1]);
+    proc.note_off(SLOT_NOTES[1]);
+    let set = Settings {
+        object: 2,
+        tune_hz: 110.0,
+        midi_voices: true,
+        ..Settings::default()
+    };
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    for _ in 0..600 {
+        proc.configure(&set);
+        proc.process(&mut l, &mut r);
+    }
+    let f = proc.engine().info_frame();
+    for v in 0..4 {
+        assert!(
+            f[13 + v].is_finite(),
+            "slot 2 asked for four voices and voice {v} is not sounding"
+        );
+    }
+    assert!(
+        f[17].is_nan(),
+        "slot 2 asked for four voices and five sound"
+    );
+    // Its second voice is a fourth above the root, which is what was stored.
+    let frame = proc.engine().modes_frame().to_vec();
+    let got = frame
+        .chunks(MODE_FIELDS)
+        .find(|row| row[2] > 0.0 && row[1] as usize == 1 && row[0] == 1.0)
+        .map(|row| row[2])
+        .expect("voice 1 has a fundamental");
+    let want = 110.0 * 2f32.powf(5.0 / 12.0);
+    assert!(
+        (1200.0 * (got / want).log2()).abs() < 1.0,
+        "the recalled fourth sounds at {got:.2} Hz and should be {want:.2}"
+    );
+}
+
+#[test]
 fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
     // Found live by the panel agent, driving every control to both ends: a
     // string at negative Inharm published 18,446,744,073,709,551,615
@@ -2325,7 +2563,7 @@ fn the_store_hook_carries_an_edit_to_the_audio_thread() {
     // own state.
     let (bridge, ix) = build_bridge("noob-resonator-test", SR);
     let table = Arc::new(ModeTable::new());
-    attach_mode_table(&bridge, table.clone());
+    attach_mode_table(&bridge, table.clone(), Arc::new(SlotTable::new()));
     let before = table.generation();
 
     bridge
@@ -2645,6 +2883,7 @@ fn every_setting_survives_a_preset_round_trip() {
         bar_tuning: 1,
         bar_third: 1,
         voices: 5,
+        midi_voices: true,
         voice_semis: [-5.0, 2.0, 9.0, 14.0, 21.0, 33.0],
         radius_mm: 47.0,
         opening: 0.37,

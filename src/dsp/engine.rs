@@ -62,7 +62,7 @@ pub const MODE_FIELDS: usize = 8;
 /// thirteen, and a second stream would be a second arrival time to reconcile
 /// — which is the fault that made a ratio-1 partial draw at 1.2. Appending
 /// also leaves every existing index where it was.
-pub const INFO_LEN: usize = 13 + CHORD_VOICES;
+pub const INFO_LEN: usize = 13 + 2 * CHORD_VOICES;
 /// Points on the response curve.
 pub const RESPONSE_POINTS: usize = 512;
 /// Points of the response curve refreshed per block, so a redraw never lands
@@ -184,6 +184,8 @@ pub struct Settings {
     pub bar_third: usize,
     /// How many of the chord's voices are sounding.
     pub voices: usize,
+    /// Whether held MIDI notes set the voice pitches.
+    pub midi_voices: bool,
     /// Each voice's pitch in semitones from the root, in the user's order.
     pub voice_semis: [f32; CHORD_VOICES],
     pub radius_mm: f32,
@@ -234,6 +236,7 @@ impl Default for Settings {
             bar_tuning: 0,
             bar_third: 0,
             voices: 1,
+            midi_voices: false,
             voice_semis: [0.0, 7.0, 16.0, 12.0, 19.0, 24.0],
             radius_mm: guide::RADIUS_REF_MM,
             opening: 0.0,
@@ -288,6 +291,11 @@ impl Settings {
     pub fn inharm_b(&self) -> f32 {
         let x = self.inharm.clamp(-1.0, 1.0);
         INHARM_B_MAX * x * x * x.signum()
+    }
+
+    /// Whether this object can carry voices at all.
+    pub fn object_can_voice(&self) -> bool {
+        self.object().can_voice()
     }
 
     pub fn shape(&self) -> Shape {
@@ -385,6 +393,9 @@ pub struct Resonator {
     /// The fundamental the published mode table was built at, which is what
     /// `f0_hz` reports — **not** the current one. See [`Self::info_frame`].
     readout_f0: f32,
+    /// Which voices MIDI is holding, for the readout only: the engine does
+    /// not decide this and does not act on it.
+    held: [bool; CHORD_VOICES],
 
     meter: [f32; 4],
     modes_frame: Vec<f32>,
@@ -436,6 +447,7 @@ impl Resonator {
             applied: None,
             restarts: 0,
             readout_f0: 220.0,
+            held: [false; CHORD_VOICES],
             meter: [0.0; 4],
             modes_frame: vec![0.0; MAX_EDITS * MODE_FIELDS],
             response: vec![-120.0; RESPONSE_POINTS],
@@ -503,6 +515,13 @@ impl Resonator {
     /// The air column, likewise: the root voice's loop.
     pub fn guide(&self) -> &Guide {
         &self.guides[0][0]
+    }
+
+    /// Record which voices MIDI is holding. Readout only.
+    pub fn set_held(&mut self, v: crate::dsp::Voicing) {
+        for k in 0..CHORD_VOICES {
+            self.held[k] = v.is_held(k);
+        }
     }
 
     /// How many voices the current object is actually sounding.
@@ -660,7 +679,27 @@ impl Resonator {
             self.voice_available(3),
             self.voice_available(4),
             self.voice_available(5),
+            // **Where each voice's pitch came from**, so a face can say
+            // which are held and which are free rather than inferring it.
+            // 0 is a manual pitch, 1 is a note being held; NaN is a voice
+            // that is not sounding. A slot recall from the panel writes the
+            // parameters through the ordinary path, so it arrives here as
+            // manual — which is true, and the page knows it was a slot
+            // because the page did the writing.
+            self.voice_source(0),
+            self.voice_source(1),
+            self.voice_source(2),
+            self.voice_source(3),
+            self.voice_source(4),
+            self.voice_source(5),
         ]
+    }
+
+    fn voice_source(&self, v: usize) -> f32 {
+        if v >= self.set.shape().voice_count() as usize {
+            return f32::NAN;
+        }
+        if self.held[v] { 1.0 } else { 0.0 }
     }
 
     /// How many partials voice `v` has under the ceiling, or NaN if it is not

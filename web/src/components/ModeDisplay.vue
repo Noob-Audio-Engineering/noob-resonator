@@ -858,8 +858,20 @@ const tip = (p) =>
         <span><b>{{ bars.length }}</b> drawn</span>
         <span>top at <b>{{ top }}</b></span>
         <span v-if="overrides.count"><b>{{ overrides.count }}</b> edited</span>
-        <span v-if="info.columnM > 0">air column <b>{{ lengthText(info.columnM) }}</b></span>
-        <span v-if="info.loopMs > 0">loop <b>{{ info.loopMs.toFixed(2) }} ms</b></span>
+        <!--
+          **Six voices are six air columns, and one field cannot be all of
+          them.** The engine publishes nothing rather than the first voice's
+          length, because a number in the right place describing something
+          other than what a reader expects is the failure this panel keeps
+          catching — and a label saying "(voice 1 of 3)" is a weaker defence
+          than not making the claim. So the readout says what it has instead of
+          going quietly blank.
+        -->
+        <span v-if="guide && voiced" class="md__many">{{ voices.length }} air columns, one per voice</span>
+        <template v-else>
+          <span v-if="info.columnM > 0">air column <b>{{ lengthText(info.columnM) }}</b></span>
+          <span v-if="info.loopMs > 0">loop <b>{{ info.loopMs.toFixed(2) }} ms</b></span>
+        </template>
       </div>
     </div>
 

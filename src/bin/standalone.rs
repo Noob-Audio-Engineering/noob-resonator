@@ -49,9 +49,11 @@ fn audio_thread(
     mut audio: AudioHandle,
     ix: dsp::ParamIx,
     table: Arc<ModeTable>,
+    slots: Arc<dsp::SlotTable>,
     stats: Arc<Stats>,
 ) {
     let mut processor = Processor::with_table(SR, table);
+    processor.set_slots(slots);
     let mut source = Source::new(0x9E37_79B9);
     let mut l = vec![0.0f32; BLOCK];
     let mut r = vec![0.0f32; BLOCK];
@@ -165,7 +167,8 @@ fn main() {
     // that a table saved last time is in place before the first block.
     let store = FileStore::attach(&bridge, FileStore::default_path("noob-resonator"));
     let table = Arc::new(ModeTable::new());
-    dsp::attach_mode_table(&bridge, table.clone());
+    let slots = Arc::new(dsp::SlotTable::new());
+    dsp::attach_mode_table(&bridge, table.clone(), slots.clone());
 
     let stats = Arc::new(Stats {
         blocks: AtomicU64::new(0),
@@ -177,7 +180,7 @@ fn main() {
         let table = table.clone();
         thread::Builder::new()
             .name("fake-audio".into())
-            .spawn(move || audio_thread(audio, ix, table, stats))
+            .spawn(move || audio_thread(audio, ix, table, slots, stats))
             .expect("spawn audio thread");
     }
 

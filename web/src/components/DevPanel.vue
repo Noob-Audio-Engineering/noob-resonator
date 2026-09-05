@@ -20,6 +20,7 @@
 import { computed } from 'vue';
 import { Segmented } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import ResKnob from './ResKnob.vue';
+import { useChords } from '../composables/useChords.js';
 import {
   countText,
   hzText,
@@ -43,6 +44,8 @@ const info = useInfo();
 const response = useResponse();
 const overrides = useOverrides();
 const object = useObject();
+const chords = useChords();
+const voiceCount = computed(() => chords.sounding);
 const meta = useObjectMeta();
 const designMode = useDesignMode();
 const r = useRes();
@@ -73,6 +76,22 @@ const uses = computed(() => meta.value?.uses || null);
  * as reporting the good state as a fault.
  */
 const bankField = (whenBank) => (object.value.engine === 'waveguide' ? 'not a mode bank' : whenBank);
+
+/**
+ * Why an air-column field is unset.
+ *
+ * Two reasons that are not the same. **The object is not an air column** — a
+ * bank has no bore. Or **it is one several times over**: six voices are six
+ * loops with six lengths, and the engine publishes nothing rather than pass off
+ * the first voice's as the answer. Reporting the second as "not an air column"
+ * would be flatly untrue about a Pipe.
+ */
+const columnField = (n) =>
+  object.value.engine !== 'waveguide'
+    ? 'not an air column'
+    : n > 1
+      ? `${n} of them, one per voice`
+      : 'not published';
 
 const field = (name, value, whenUnset, fmt = null) => {
   if (!info.declares(name)) return 'not published';
@@ -129,8 +148,8 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
             <tr><td>drawn in the display</td><td>{{ modes.list.length }}</td></tr>
             <tr><td>crossover</td><td>{{ field('crossover_hz', info.crossoverHz, bankField('nothing fused')) }}</td></tr>
             <tr><td>ceiling</td><td>{{ field('ceiling_hz', info.ceilingHz, bankField('no wall')) }}</td></tr>
-            <tr><td>column</td><td>{{ field('column_m', info.columnM, 'not an air column', (v) => `${v.toFixed(3)} m`) }}</td></tr>
-            <tr><td>loop</td><td>{{ field('loop_ms', info.loopMs, 'not an air column', (v) => `${v.toFixed(2)} ms`) }}</td></tr>
+            <tr><td>column</td><td>{{ field('column_m', info.columnM, columnField(voiceCount), (v) => `${v.toFixed(3)} m`) }}</td></tr>
+            <tr><td>loop</td><td>{{ field('loop_ms', info.loopMs, columnField(voiceCount), (v) => `${v.toFixed(2)} ms`) }}</td></tr>
             <tr><td>limiter reduction</td><td>{{ field('limit_gr_db', info.limitGrDb, 'limiter off', (v) => `${v.toFixed(2)} dB`) }}</td></tr>
             <tr><td>mode table</td><td>{{ info.build == null ? '—' : info.build >= 0.999 ? 'settled' : Math.round(info.build * 100) + '%' }}</td></tr>
             <tr><td>overrides</td><td>{{ overrides.count || 'none' }}</td></tr>
