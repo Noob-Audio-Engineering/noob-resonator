@@ -21,11 +21,24 @@ decay.
 
 | Part | Where | Role |
 |---|---|---|
-| DSP | `src/dsp/` | The eight objects, both engines, the selection, the tail, and the parameter and stream layout. Host-agnostic. |
+| DSP | `src/dsp/` | The ten objects, both engines, the selection, the tail, and the parameter and stream layout. Host-agnostic. |
 | Plug-in | `src/plugin.rs` (feature `plugin`) | nih-plug VST3 / CLAP effect. Embeds `web/dist`. |
 | Standalone | `src/bin/standalone.rs` | Fake audio thread on demo signals plus the framework's server: interface development without a DAW. |
 | Measurement | `src/bin/benchmark.rs` | Writes [`docs/BENCHMARK.md`](docs/BENCHMARK.md). |
 | SPA | `web/` | The interface. |
+
+## Install it
+
+Every commit on `main` is built for Windows and macOS and published to the
+rolling [`latest`](https://github.com/Noob-Audio-Engineering/noob-resonator/releases/tag/latest)
+release: a VST3 and a CLAP in one zip, with a checksummed manifest beside them
+and a photograph of that build running.
+
+The easy way is the [Noob Plugin
+Manager](https://github.com/Noob-Audio-Engineering/noob-plugin-manager), which
+installs and updates every plug-in in this organisation and verifies the
+checksum before it writes anything. Or take the zip and unpack it into your
+plug-in folders yourself.
 
 ## Build and run
 
@@ -60,9 +73,15 @@ name with no `GetPluginFactory` in it.
 **"More modes" is the wrong axis, and the affordability question is closed.** A
 mode costs about a third of a nanosecond per sample in stereo on the machine
 that generated `docs/BENCHMARK.md`, four thousand of them are about six per cent
-of one core, and five of the eight objects here have their *entire* physical mode
-set inside that budget several times over. A bar tuned to 55 Hz has twenty-eight
-partials in the whole audible band. You can simply afford them.
+of one core, and most of these objects have their *entire* physical mode set
+inside that budget several times over. At 110 Hz, the bottom of the range where
+this is hardest, the largest one that fits is a rectangular plate at 265
+partials below 20 kHz --- fifteen times under. The two that do not fit are the
+membranes, at 13,846 and 51,673. The two air columns never ask: a waveguide
+costs the same whatever its resonance count. (`tests/documented_counts.rs`
+asserts these, so the sentence cannot go stale without something failing.) A
+bar tuned to 55 Hz has twenty-eight partials in the whole audible band. You can
+simply afford them.
 
 **The scarce resource is *which* modes.** Measured on this engine, against a
 reference bank containing every partial the object has: at a 64-mode budget on a
