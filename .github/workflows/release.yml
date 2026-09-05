@@ -1,0 +1,141 @@
+# Build an installable Windows bundle for every commit on `main`, and publish it
+# to a rolling `latest` release so the updater always has one place to look.
+#
+# This file is identical in every Noob plug-in repository: everything it needs
+# --- the crate name, the library name, the version --- is read from
+# `Cargo.toml`, so nothing here has to be edited when it is copied.
+#
+# A tag push (`v1.2.3`) publishes a permanent release as well. `latest` is a
+# prerelease on purpose: it is the newest commit, not the newest *release*, and
+# a host that installs it is tracking `main`.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows bundle
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # `include_dir!` embeds `web/dist`, so the page must exist before the
+      # library is compiled or the plug-in ships with no interface.
+      - name: Build the page
+        working-directory: web
+        run: npm install && npm run build
+
+      # Every cargo command here carries `--features plugin`. Without it cargo
+      # recompiles the library *without* the feature and leaves a ~106 KB
+      # artefact of the same name and no entry points, which has installed a
+      # broken bundle four times on this project.
+      - name: Build the plug-in
+        run: cargo build --release --features plugin --lib
+
+      - name: Read the crate's own name and version
+        id: crate
+        shell: pwsh
+        run: |
+          $m = Get-Content Cargo.toml -Raw
+          $pkg = [regex]::Match($m, '(?m)^\s*name\s*=\s*"([^"]+)"').Groups[1].Value
+          $ver = [regex]::Match($m, '(?m)^\s*version\s*=\s*"([^"]+)"').Groups[1].Value
+          if (-not $pkg -or -not $ver) { throw "could not read name/version from Cargo.toml" }
+          "pkg=$pkg"       >> $env:GITHUB_OUTPUT
+          "lib=$($pkg -replace '-','_')" >> $env:GITHUB_OUTPUT
+          "ver=$ver"       >> $env:GITHUB_OUTPUT
+          Write-Host "package $pkg  version $ver"
+
+      # Check the artefact rather than the exit code. A library built without
+      # the feature compiles happily and exports nothing, and the only visible
+      # difference is its size.
+      - name: Verify the artefact carries both entry points
+        shell: pwsh
+        run: |
+          $dll = "target/release/${{ steps.crate.outputs.lib }}.dll"
+          if (-not (Test-Path $dll)) { throw "no library at $dll" }
+          $len = (Get-Item $dll).Length
+          $txt = [System.IO.File]::ReadAllText($dll, [System.Text.Encoding]::ASCII)
+          $vst3 = $txt.Contains('GetPluginFactory')
+          $clap = $txt.Contains('clap_entry')
+          Write-Host "size $len  GetPluginFactory=$vst3  clap_entry=$clap"
+          if (-not $vst3) { throw "the library exports no GetPluginFactory --- built without --features plugin?" }
+          if (-not $clap) { throw "the library exports no clap_entry --- built without --features plugin?" }
+          if ($len -lt 500000) { throw "the library is $len bytes, which is the stripped size" }
+
+      # The VST3 bundle layout Windows hosts expect, and the CLAP beside it.
+      # One library serves both: it exports both entry points.
+      - name: Package
+        id: pack
+        shell: pwsh
+        run: |
+          $pkg = "${{ steps.crate.outputs.pkg }}"
+          $dll = "target/release/${{ steps.crate.outputs.lib }}.dll"
+          $out = "dist/$pkg"
+          New-Item -ItemType Directory -Force -Path "$out/$pkg.vst3/Contents/x86_64-win" | Out-Null
+          Copy-Item $dll "$out/$pkg.vst3/Contents/x86_64-win/$pkg.vst3"
+          Copy-Item $dll "$out/$pkg.clap"
+          $zip = "dist/$pkg-windows-x86_64.zip"
+          Compress-Archive -Path "$out/*" -DestinationPath $zip -Force
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "zip=$zip"  >> $env:GITHUB_OUTPUT
+          "sha=$sha"  >> $env:GITHUB_OUTPUT
+          Write-Host "$zip  sha256 $sha"
+
+      # A manifest published beside the zip, so the updater can decide whether
+      # it needs the download before fetching it.
+      - name: Manifest
+        shell: pwsh
+        run: |
+          $pkg = "${{ steps.crate.outputs.pkg }}"
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF -replace 'refs/tags/','' } else { 'latest' }
+          $man = [ordered]@{
+            schema   = 1
+            id       = $pkg
+            version  = "${{ steps.crate.outputs.ver }}"
+            commit   = $env:GITHUB_SHA
+            built    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platform = 'windows-x86_64'
+            asset    = "$pkg-windows-x86_64.zip"
+            sha256   = "${{ steps.pack.outputs.sha }}"
+            url      = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$pkg-windows-x86_64.zip"
+            installs = @(
+              [ordered]@{ kind = 'vst3'; path = "$pkg.vst3"; into = 'vst3' },
+              [ordered]@{ kind = 'clap'; path = "$pkg.clap"; into = 'clap' }
+            )
+          }
+          $man | ConvertTo-Json -Depth 5 | Set-Content "dist/$pkg-windows-x86_64.json" -Encoding utf8
+          Get-Content "dist/$pkg-windows-x86_64.json"
+
+      # `latest` is deleted and remade rather than updated, so its published
+      # date is the date of the build it holds and never an older one.
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $pkg = "${{ steps.crate.outputs.pkg }}"
+          $isTag = $env:GITHUB_REF -like 'refs/tags/*'
+          $tag = if ($isTag) { $env:GITHUB_REF -replace 'refs/tags/','' } else { 'latest' }
+          $short = $env:GITHUB_SHA.Substring(0,7)
+          if (-not $isTag) {
+            # First run has no `latest`, and a delete that fails for that
+            # reason must not fail the build.
+            gh release delete $tag --yes --cleanup-tag 2>$null | Out-Null
+            $global:LASTEXITCODE = 0
+            gh release create $tag --prerelease --title "$pkg (main)" --notes "The newest commit on ``main``: $short, version ${{ steps.crate.outputs.ver }}. Built and published automatically; this moves with every commit."
+          } else {
+            gh release create $tag --title "$pkg ${{ steps.crate.outputs.ver }}" --notes "Commit $short."
+          }
+          gh release upload $tag "dist/$pkg-windows-x86_64.zip" "dist/$pkg-windows-x86_64.json" --clobber
