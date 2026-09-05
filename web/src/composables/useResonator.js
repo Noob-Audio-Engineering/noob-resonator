@@ -720,6 +720,23 @@ export function useResponse() {
  * is the best the page can do without assuming how the engine folds Fine in —
  * so `fromEngine` says which, and the display's axis caption says so too.
  */
+/**
+ * Half the sample rate, from the manifest, or `null` when the build does not
+ * publish one.
+ *
+ * The panel needs it for one thing only: **a partial the engine has held at
+ * the ceiling is not where the object's ratios put it**, and the only way to
+ * recognise one is to know where the ceiling is. Read from the manifest rather
+ * than assumed, so a build at 96 kHz is not measured against a 48 kHz line.
+ */
+export function useNyquist() {
+  const { manifest } = useNoobVstWebguiFramework();
+  return computed(() => {
+    const sr = manifest.value?.meta?.sample_rate;
+    return Number.isFinite(sr) && sr > 0 ? sr / 2 : null;
+  });
+}
+
 export function useFundamental() {
   const r = useRes();
   const info = useInfo();

@@ -1,4 +1,4 @@
-# Seven things that check the page, and what each one can prove
+# Eight things that check the page, and what each one can prove
 
 These are in the repository rather than in a session scratchpad for the reason
 the engine's `tools/README.md` gives: a check that is lost is a check nobody
@@ -138,11 +138,45 @@ fundamental. The engine takes `f0_hz` at the instant it builds the rows now,
 which removed the systematic version; the steady state is exact and about 0.3%
 of frames during a fast gesture are not.
 
+**That remainder is a seam rather than a browser artefact**, and the engine's
+author was right to correct me on it: `f0_hz` now describes the table's moment,
+but it still does not travel *in the same frame* as the bars, so two streams are
+still being read together. It is closable at the engine — a ruler on the modes
+frame, or a ratio per row — and deliberately is not, because nobody has measured
+the arrival order directly and the one page-side fix that was tried made it
+worse. The option is on the record so that it stays a decision rather than
+becoming an oversight.
+
 **A page-side attempt to close that remainder is what this probe disproved.**
 Pinning the ruler to whatever the fundamental was when the bars last changed
 looked obviously right and **doubled the rate**, from 0.33% to 0.73% of samples
 — so the ordering is not the one that reasoning suggested, and the change was
 reverted rather than shipped on the strength of the argument for it.
+
+## `ceiling.mjs` — are the held partials drawn as what they are?
+
+```sh
+node tools/ceiling.mjs http://localhost:5173/
+```
+
+A pitch move can push a partial past Nyquist, and the engine **clamps it there
+rather than letting it alias** — so it sounds at the ceiling and not where the
+object's ratios put it. Several arrive at once and land on the same pixel,
+which drew as one bright partial at the top of the series instead of the twenty
+it was.
+
+Two cases, and the second keeps the first honest: with the oscillator pitching a
+dense object up, the stack should be marked, dashed and counted; **with it off
+and the object at rest, nothing should be marked at all.**
+
+**The detection is the interesting part.** Testing `hz` against Nyquist found
+nothing — the clamp sits at 23.52 kHz on a 24 kHz band, so a threshold tight
+enough to mean "at the ceiling" missed every one, and one loose enough to catch
+them would have been a number chosen to make the test pass. What is observable
+is that several distinct modes are sharing one frequency, which cannot be true
+of an object: two modes do not sound at one pitch, bar the degenerate pairs a
+square has, and those come in twos and fours anywhere in the series rather than
+three-deep at its top.
 
 ## `extremes.mjs` — every control at both ends, on every object
 

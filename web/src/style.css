@@ -452,6 +452,12 @@ body {
  * user came to read the best state as a broken build.
  */
 .md__prov.is-fine { color: var(--res-dim); opacity: 1; font-weight: 400; }
+/*
+ * And a third case: something real is being drawn that a reader would
+ * otherwise misread. Neither a gap nor a fault, so neither colour above — it
+ * is a note about how to read the picture, in the picture's own ink.
+ */
+.md__prov.is-note { color: var(--res-guide); opacity: 0.9; font-weight: 400; }
 
 /* --------------------------------------------------------------------------
  * The deck

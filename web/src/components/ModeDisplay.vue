@@ -58,6 +58,7 @@ import {
   timeText,
   useDesignMode,
   useFundamental,
+  useNyquist,
   useInfo,
   useModes,
   useObject,
@@ -138,6 +139,18 @@ const guide = computed(() => object.value.engine === 'waveguide');
 const f0 = computed(() => Math.max(1e-6, fundamental.value.hz));
 const nyquist = computed(() => (response.has ? response.range[1] : 24000));
 
+/**
+ * Nyquist as the build actually states it, or `null`.
+ *
+ * **Not the same value as the one above, and the difference is the point.**
+ * `nyquist` falls back to 24 kHz so the axis always has a top, which is fine
+ * for drawing a ruler and not fine for deciding that the engine has clamped a
+ * partial — that is a claim about what the engine did, and a guessed ceiling
+ * would make it on no evidence. When the build says nothing, nothing is
+ * marked.
+ */
+const statedNyquist = useNyquist();
+
 const geom = computed(() => {
   const rMax = Math.max(4, nyquist.value / f0.value);
   const plotW = Math.max(20, W.value - PAD.l - PAD.r);
@@ -210,8 +223,38 @@ const ringTicks = computed(() =>
 
 const crossX = computed(() => (info.crossoverHz > 0 ? xHz(info.crossoverHz) : null));
 
+/** How many partials have to share one frequency before it is a stack and not a coincidence. */
+const STACK_MIN = 3;
+
+/**
+ * The partials sharing the highest frequency in the drawn set, when there are
+ * enough of them to be a stack rather than a coincidence.
+ *
+ * **Detected from what it is, not from where the ceiling is guessed to be.**
+ * The first version of this tested `hz` against Nyquist and found nothing: the
+ * engine clamps at 23.52 kHz on a 24 kHz band, so a threshold tight enough to
+ * mean "at the ceiling" missed every one, and a threshold loose enough to catch
+ * them would have been a number chosen to make the test pass. What is
+ * observable is that **several distinct modes are sharing one frequency**,
+ * which cannot be true of an object — two modes do not sound at one pitch,
+ * except for the degenerate pairs a square has, and those come in twos and
+ * fours and sit anywhere in the series rather than three-deep at its top.
+ */
+function heldOf(list) {
+  if (list.length < STACK_MIN) return [];
+  const topHz = list.reduce((a, b) => (b.hz > a ? b.hz : a), 0);
+  if (!(topHz > 0)) return [];
+  const held = list.filter((b) => b.hz >= topHz * 0.999);
+  if (held.length < STACK_MIN) return [];
+  // A stack belongs at the top of the band. Anything lower is the object's own
+  // degeneracy, and the engine is not holding it anywhere.
+  const ny = statedNyquist.value;
+  if (ny != null && topHz < ny * 0.85) return [];
+  return held;
+}
+
 const bars = computed(() => {
-  return modes.list.map((p) => {
+  const list = modes.list.map((p) => {
     const top = Math.max(p.dbL ?? DB_FLOOR, p.dbR ?? DB_FLOOR);
     return {
       ...p,
@@ -236,13 +279,32 @@ const bars = computed(() => {
       edited: overrides.has(p.i, p.j),
       /** Nothing measurable came out of it. */
       dead: top <= DB_FLOOR + 0.5,
+      /** Set in the second pass below, which needs the whole list to see a stack. */
+      held: false,
       /** The engine says this partial started higher, so a node took the difference. */
       lost: p.bareDb != null && top < p.bareDb - 1.2,
       /** Above the crossover the ear fuses them, so they are drawn as a band. */
       fused: info.crossoverHz > 0 && p.hz > info.crossoverHz,
     };
   });
+  for (const b of heldOf(list)) b.held = true;
+  return list;
 });
+/** The stack, as the display draws and describes it. A plain read of `bars`. */
+const ceilingStack = computed(() => {
+  const held = bars.value.filter((b) => b.held);
+  if (!held.length) return null;
+  const flip = W.value - PAD.r - held[0].x < 130;
+  return {
+    count: held.length,
+    x: held[0].x,
+    hz: held[0].hz,
+    ceiling: statedNyquist.value,
+    anchor: flip ? 'end' : 'start',
+    tx: flip ? held[0].x - 5 : held[0].x + 5,
+  };
+});
+
 const resolved = computed(() => bars.value.filter((b) => !b.fused));
 const fused = computed(() => bars.value.filter((b) => b.fused));
 
@@ -553,6 +615,23 @@ const engineDisagrees = computed(() => {
  * partial its object has is the device working, and the readout that says so
  * is the one worth reading.
  */
+/**
+ * What the display is drawing that a reader would otherwise misread.
+ *
+ * Not a fault and not a gap: a real state that looks like something it is not,
+ * which is its own category and deserves its own sentence.
+ */
+const readCarefully = computed(() => {
+  const st = ceilingStack.value;
+  if (!st) return [];
+  return [
+    `${st.count} partials are sharing one frequency at ${hzText(st.hz)}` +
+      (st.ceiling ? `, just under the ${hzText(st.ceiling)} ceiling` : '') +
+      ' — the engine holds a partial there rather than letting it alias, so those are drawn where they' +
+      ' sound rather than where the object puts them',
+  ];
+});
+
 const notApplicable = computed(() => {
   const out = [];
   if (!info.live) return out;
@@ -754,7 +833,7 @@ const tip = (p) =>
           <line
             v-for="p in bars"
             :key="`h${p.key}`"
-            :class="{ edited: p.edited, picked: isPicked(p), guide }"
+            :class="{ edited: p.edited, picked: isPicked(p), guide, held: p.held }"
             :x1="p.x"
             :y1="geom.levelBottom - 5"
             :x2="p.x"
@@ -772,6 +851,19 @@ const tip = (p) =>
         <g v-if="crossX && fused.length" class="g-cross">
           <line :x1="crossX" :y1="geom.levelTop" :x2="crossX" :y2="geom.levelBottom" />
           <text :x="crossX + 5" :y="geom.levelBottom - 6">above here the ear fuses them</text>
+        </g>
+
+        <!--
+          Partials the engine is holding at the ceiling, drawn as the stack
+          they are. Neither dropped nor drawn as ordinary partials: both would
+          be a false picture, one by omission and one by making twenty look
+          like one.
+        -->
+        <g v-if="ceilingStack" class="g-held">
+          <line :x1="ceilingStack.x" :y1="geom.levelTop" :x2="ceilingStack.x" :y2="geom.levelBottom" />
+          <text :x="ceilingStack.tx" :y="geom.levelBottom - 4" :text-anchor="ceilingStack.anchor">
+            {{ ceilingStack.count }} held here
+          </text>
         </g>
 
         <g v-if="cut" class="g-cut select">
@@ -823,7 +915,10 @@ const tip = (p) =>
     <p v-if="showProv && missing.length" class="md__prov" :class="{ 'is-fault': engineDisagrees }">
       {{ missing.join(' · ') }}.
     </p>
-    <p v-if="showProv && !missing.length && notApplicable.length" class="md__prov is-fine">
+    <p v-if="showProv && readCarefully.length" class="md__prov is-note">
+      {{ readCarefully.join(' · ') }}.
+    </p>
+    <p v-if="showProv && !missing.length && !readCarefully.length && notApplicable.length" class="md__prov is-fine">
       {{ notApplicable.join(' · ') }}.
     </p>
   </section>
@@ -837,7 +932,7 @@ const tip = (p) =>
  * click meant for that bar, so the partials nearest the one line the eye is
  * drawn to were the ones that could not be selected.
  */
-.g-grid, .g-axis, .g-ghostline, .g-cross, .g-cut, .g-ring, .g-dead,
+.g-grid, .g-axis, .g-ghostline, .g-cross, .g-cut, .g-held, .g-ring, .g-dead,
 .g-fused, .g-fused-floor, .g-lost, .g-right, .g-curve { pointer-events: none; }
 
 .g-grid line { stroke: rgb(255 255 255 / 0.055); stroke-width: 1; }
@@ -883,6 +978,16 @@ svg.is-drawing .g-bar rect, svg.is-drawing .g-handles line { cursor: crosshair; 
 
 .g-cross line { stroke: rgb(220 227 236 / 0.28); stroke-width: 1; stroke-dasharray: 1 4; }
 .g-cross text { font-size: 8.5px; fill: rgb(220 227 236 / 0.38); }
+
+/*
+ * Partials the engine holds at the ceiling. Several land on one pixel and read
+ * as a single loud partial at the top of the series, which is the opposite of
+ * what they are — so the stack is dashed, counted, and the bars themselves say
+ * they are held rather than drawing as ordinary partials.
+ */
+.g-held line { stroke: var(--res-guide); stroke-width: 1.2; stroke-dasharray: 2 3; }
+.g-held text { font-size: 9px; fill: var(--res-guide); }
+.g-bars line.held, .g-handles line.held { stroke-dasharray: 2 2; opacity: 0.5; }
 
 .g-cut rect { fill: rgb(11 14 18 / 0.66); }
 .g-cut line { stroke: var(--res-warn); stroke-width: 1; }

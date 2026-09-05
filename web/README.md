@@ -694,6 +694,26 @@ refused and why the figures above it are blank. The engine bounds its own
 search now, and where a count sits exactly on that bound the strip says *at
 least*, because a bound is a floor and not a total.
 
+**Partials the engine holds at the ceiling are drawn as what they are.** A
+pitch move can push a partial past Nyquist, and the engine clamps it there
+rather than letting it alias — so it sounds at the ceiling and not where the
+object's ratios put it. Several arrive at once, land on the same pixel, and
+drew as **one bright partial at the top of the series** instead of the twenty
+it was. They are neither dropped nor drawn as ordinary partials, because both
+are false pictures: one by omission, one by making twenty look like one. The
+stack is dashed and counted, and a line under the plot says why they are there.
+
+**How they are recognised is the part worth keeping.** Testing the frequency
+against Nyquist found nothing — the clamp sits at 23.52 kHz on a 24 kHz band,
+so a threshold tight enough to mean "at the ceiling" missed every one, and one
+loose enough to catch them would have been a number chosen to make the test
+pass. What is observable is that **several distinct modes are sharing one
+frequency**, which cannot be true of an object: two modes do not sound at one
+pitch, bar the degenerate pairs a square has, and those come in twos and fours
+anywhere in the series rather than three-deep at its top. `tools/ceiling.mjs`
+checks both that the stack is marked when it is there and that nothing is
+marked when it is not.
+
 **A control that does nothing says so.** The clamped disc's mode shape needs a
 modified Bessel function, which is exactly the machinery that left this
 directory, so design mode does not model it: Hit and the two pickups do nothing
@@ -846,6 +866,7 @@ designing is not quietly wrong.
 | `tools/contract.mjs` | the live manifest against every claim the panel makes on screen; no browser — `npm run contract` |
 | `tools/follows.mjs` | whether the bank keeps up while a knob is turning, and whether the axis and the partials come from the same state — `npm run follows` |
 | `tools/pairing.mjs` | how often a partial does not sit on the ruler drawn beside it; reports a rate, not a verdict — `npm run pairing` |
+| `tools/ceiling.mjs` | whether the partials held at Nyquist are drawn as a counted stack, and that nothing is marked at rest — `npm run ceiling` |
 | `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
 | `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
 | `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |
