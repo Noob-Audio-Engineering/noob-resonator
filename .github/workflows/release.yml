@@ -1,13 +1,13 @@
-# Build an installable Windows bundle for every commit on `main`, and publish it
-# to a rolling `latest` release so the updater always has one place to look.
+# Build installable bundles for every commit on `main` and publish them where
+# the plug-in manager can find them.
 #
-# This file is identical in every Noob plug-in repository: everything it needs
-# --- the crate name, the library name, the version --- is read from
-# `Cargo.toml`, so nothing here has to be edited when it is copied.
+# This file is identical in every Noob plug-in repository: the crate name, the
+# library name and the version are read from `Cargo.toml`, so nothing here is
+# edited when it is copied.
 #
-# A tag push (`v1.2.3`) publishes a permanent release as well. `latest` is a
-# prerelease on purpose: it is the newest commit, not the newest *release*, and
-# a host that installs it is tracking `main`.
+# `latest` is a prerelease on purpose --- it is the newest *commit*, not the
+# newest release, and installing it means tracking `main`. A tag push
+# (`v1.2.3`) publishes a permanent release beside it.
 name: Release
 
 on:
@@ -20,122 +20,163 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    name: Windows bundle
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+            # macOS gets one universal binary rather than two downloads, so an
+            # Apple Silicon and an Intel machine install the same file.
+            targets: ""
+          - os: macos-latest
+            label: macos-universal
+            targets: "--target aarch64-apple-darwin --target x86_64-apple-darwin"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: macOS cross targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
       # `include_dir!` embeds `web/dist`, so the page must exist before the
-      # library is compiled or the plug-in ships with no interface.
+      # library compiles or the plug-in ships with no interface.
       - name: Build the page
         working-directory: web
         run: npm install && npm run build
 
-      # Every cargo command here carries `--features plugin`. Without it cargo
-      # recompiles the library *without* the feature and leaves a ~106 KB
-      # artefact of the same name and no entry points, which has installed a
-      # broken bundle four times on this project.
-      - name: Build the plug-in
-        run: cargo build --release --features plugin --lib
+      # nih-plug's own bundler rather than a hand-made layout. On Windows the
+      # difference is cosmetic; on macOS a `.vst3` is a real bundle with an
+      # `Info.plist` and a `PkgInfo`, and getting that wrong produces something
+      # that looks installed and never loads.
+      - name: Install the bundler
+        run: cargo install --git https://github.com/Noob-Audio-Engineering/nih-plug.git --branch host-resize cargo-nih-plug
 
       - name: Read the crate's own name and version
         id: crate
-        shell: pwsh
+        shell: bash
         run: |
-          $m = Get-Content Cargo.toml -Raw
-          $pkg = [regex]::Match($m, '(?m)^\s*name\s*=\s*"([^"]+)"').Groups[1].Value
-          $ver = [regex]::Match($m, '(?m)^\s*version\s*=\s*"([^"]+)"').Groups[1].Value
-          if (-not $pkg -or -not $ver) { throw "could not read name/version from Cargo.toml" }
-          "pkg=$pkg"       >> $env:GITHUB_OUTPUT
-          "lib=$($pkg -replace '-','_')" >> $env:GITHUB_OUTPUT
-          "ver=$ver"       >> $env:GITHUB_OUTPUT
-          Write-Host "package $pkg  version $ver"
+          # `sed`, not `grep -oP`: this step runs on macOS too, where grep
+          # has no Perl mode.
+          pkg=$(awk -F'"' '/^name = /{print $2; exit}' Cargo.toml)
+          ver=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          test -n "$pkg" && test -n "$ver" || { echo "could not read name/version"; exit 1; }
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          echo "package $pkg version $ver"
 
-      # Check the artefact rather than the exit code. A library built without
-      # the feature compiles happily and exports nothing, and the only visible
-      # difference is its size.
-      - name: Verify the artefact carries both entry points
-        shell: pwsh
+      # `--features plugin` is not optional. Without it cargo builds the
+      # library without the entry points and the bundle is a shell.
+      - name: Bundle
+        run: cargo nih-plug bundle ${{ steps.crate.outputs.pkg }} --release --features plugin ${{ matrix.targets }}
+
+      # Check the artefact rather than the exit code: a library built without
+      # the feature compiles happily and exports nothing.
+      - name: Verify both entry points are present
+        shell: bash
         run: |
-          $dll = "target/release/${{ steps.crate.outputs.lib }}.dll"
-          if (-not (Test-Path $dll)) { throw "no library at $dll" }
-          $len = (Get-Item $dll).Length
-          $txt = [System.IO.File]::ReadAllText($dll, [System.Text.Encoding]::ASCII)
-          $vst3 = $txt.Contains('GetPluginFactory')
-          $clap = $txt.Contains('clap_entry')
-          Write-Host "size $len  GetPluginFactory=$vst3  clap_entry=$clap"
-          if (-not $vst3) { throw "the library exports no GetPluginFactory --- built without --features plugin?" }
-          if (-not $clap) { throw "the library exports no clap_entry --- built without --features plugin?" }
-          if ($len -lt 500000) { throw "the library is $len bytes, which is the stripped size" }
+          pkg=${{ steps.crate.outputs.pkg }}
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            bin="target/bundled/$pkg.vst3/Contents/x86_64-win/$pkg.vst3"
+          else
+            bin="target/bundled/$pkg.vst3/Contents/MacOS/$pkg"
+          fi
+          test -f "$bin" || { echo "no binary at $bin"; ls -R target/bundled; exit 1; }
+          size=$(wc -c < "$bin")
+          echo "$bin is $size bytes"
+          grep -qa GetPluginFactory "$bin" || { echo "no GetPluginFactory --- built without --features plugin?"; exit 1; }
+          grep -qa clap_entry       "$bin" || { echo "no clap_entry --- built without --features plugin?"; exit 1; }
+          test "$size" -gt 500000 || { echo "$size bytes is the stripped size"; exit 1; }
+          test -e "target/bundled/$pkg.clap" || { echo "no CLAP bundle"; exit 1; }
 
-      # The VST3 bundle layout Windows hosts expect, and the CLAP beside it.
-      # One library serves both: it exports both entry points.
       - name: Package
         id: pack
-        shell: pwsh
+        shell: bash
         run: |
-          $pkg = "${{ steps.crate.outputs.pkg }}"
-          $dll = "target/release/${{ steps.crate.outputs.lib }}.dll"
-          $out = "dist/$pkg"
-          New-Item -ItemType Directory -Force -Path "$out/$pkg.vst3/Contents/x86_64-win" | Out-Null
-          Copy-Item $dll "$out/$pkg.vst3/Contents/x86_64-win/$pkg.vst3"
-          Copy-Item $dll "$out/$pkg.clap"
-          $zip = "dist/$pkg-windows-x86_64.zip"
-          Compress-Archive -Path "$out/*" -DestinationPath $zip -Force
-          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "zip=$zip"  >> $env:GITHUB_OUTPUT
-          "sha=$sha"  >> $env:GITHUB_OUTPUT
-          Write-Host "$zip  sha256 $sha"
+          pkg=${{ steps.crate.outputs.pkg }}
+          zip="$pkg-${{ matrix.label }}.zip"
+          # Zip from inside `bundled` so the archive holds `name.vst3` and
+          # `name.clap` at its root, which is what the manifest promises.
+          (cd target/bundled && 7z a -tzip -bso0 "../../$zip" "$pkg.vst3" "$pkg.clap") \
+            || (cd target/bundled && zip -qry "../../$zip" "$pkg.vst3" "$pkg.clap")
+          if command -v sha256sum >/dev/null; then sha=$(sha256sum "$zip" | cut -d' ' -f1); else sha=$(shasum -a 256 "$zip" | cut -d' ' -f1); fi
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "$zip sha256 $sha"
 
-      # A manifest published beside the zip, so the updater can decide whether
-      # it needs the download before fetching it.
+      # Published beside the zip so the manager can decide whether it needs
+      # the download before fetching it.
       - name: Manifest
-        shell: pwsh
+        shell: bash
         run: |
-          $pkg = "${{ steps.crate.outputs.pkg }}"
-          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF -replace 'refs/tags/','' } else { 'latest' }
-          $man = [ordered]@{
-            schema   = 1
-            id       = $pkg
-            version  = "${{ steps.crate.outputs.ver }}"
-            commit   = $env:GITHUB_SHA
-            built    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            platform = 'windows-x86_64'
-            asset    = "$pkg-windows-x86_64.zip"
-            sha256   = "${{ steps.pack.outputs.sha }}"
-            url      = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$pkg-windows-x86_64.zip"
-            installs = @(
-              [ordered]@{ kind = 'vst3'; path = "$pkg.vst3"; into = 'vst3' },
-              [ordered]@{ kind = 'clap'; path = "$pkg.clap"; into = 'clap' }
-            )
+          pkg=${{ steps.crate.outputs.pkg }}
+          tag=latest; case "$GITHUB_REF" in refs/tags/*) tag=${GITHUB_REF#refs/tags/};; esac
+          cat > "$pkg-${{ matrix.label }}.json" <<JSON
+          {
+            "schema": 1,
+            "id": "$pkg",
+            "version": "${{ steps.crate.outputs.ver }}",
+            "commit": "$GITHUB_SHA",
+            "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platform": "${{ matrix.label }}",
+            "asset": "${{ steps.pack.outputs.zip }}",
+            "sha256": "${{ steps.pack.outputs.sha }}",
+            "url": "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/${{ steps.pack.outputs.zip }}",
+            "installs": [
+              { "kind": "vst3", "path": "$pkg.vst3", "into": "vst3" },
+              { "kind": "clap", "path": "$pkg.clap", "into": "clap" }
+            ]
           }
-          $man | ConvertTo-Json -Depth 5 | Set-Content "dist/$pkg-windows-x86_64.json" -Encoding utf8
-          Get-Content "dist/$pkg-windows-x86_64.json"
+          JSON
+          cat "$pkg-${{ matrix.label }}.json"
 
-      # `latest` is deleted and remade rather than updated, so its published
-      # date is the date of the build it holds and never an older one.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: |
+            ${{ steps.pack.outputs.zip }}
+            ${{ steps.crate.outputs.pkg }}-${{ matrix.label }}.json
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One release holding every platform, remade rather than updated so its
+      # date is the date of the build it holds. Both platforms must have
+      # succeeded to get here, so `latest` is never half a release.
       - name: Publish
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $pkg = "${{ steps.crate.outputs.pkg }}"
-          $isTag = $env:GITHUB_REF -like 'refs/tags/*'
-          $tag = if ($isTag) { $env:GITHUB_REF -replace 'refs/tags/','' } else { 'latest' }
-          $short = $env:GITHUB_SHA.Substring(0,7)
-          if (-not $isTag) {
-            # First run has no `latest`, and a delete that fails for that
-            # reason must not fail the build.
-            gh release delete $tag --yes --cleanup-tag 2>$null | Out-Null
-            $global:LASTEXITCODE = 0
-            gh release create $tag --prerelease --title "$pkg (main)" --notes "The newest commit on ``main``: $short, version ${{ steps.crate.outputs.ver }}. Built and published automatically; this moves with every commit."
-          } else {
-            gh release create $tag --title "$pkg ${{ steps.crate.outputs.ver }}" --notes "Commit $short."
-          }
-          gh release upload $tag "dist/$pkg-windows-x86_64.zip" "dist/$pkg-windows-x86_64.json" --clobber
+          pkg=$(awk -F'"' '/^name = /{print $2; exit}' Cargo.toml)
+          ver=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)
+          short=${GITHUB_SHA:0:7}
+          ls -la dist
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              tag=${GITHUB_REF#refs/tags/}
+              gh release create "$tag" --title "$pkg $ver" --notes "Commit $short." || true
+              ;;
+            *)
+              tag=latest
+              gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+              gh release create "$tag" --prerelease --title "$pkg (main)" \
+                --notes "The newest commit on \`main\`: $short, version $ver. Built and published automatically, so this moves every time \`main\` does."
+              ;;
+          esac
+          gh release upload "$tag" dist/* --clobber
