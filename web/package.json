@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "previews": "node tools/gen-previews.mjs",
-    "test": "node --test test/design-physics.test.js"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@noob-audio-engineering/noob-vst-webgui-framework": "github:Noob-Audio-Engineering/noob-vst-webgui-framework",

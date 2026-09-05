@@ -389,6 +389,37 @@ export function nodeWeight(id, k, u, opts = {}) {
 /** The partial ratios of an object, by id. */
 export const ratiosOf = (id, n, opts = {}) => (SERIES[id] || SERIES.string).ratios(n, opts);
 
+/**
+ * A mode's own indices, `(i, j)`, for the objects that have two.
+ *
+ * A one-dimensional object has one index and the partial number *is* it. A
+ * surface has two that run independently — which is the whole reason its
+ * series is dense — and a disc's are the number of nodal diameters and the
+ * number of nodal circles. Naming them is the difference between "partial 14"
+ * and "the mode with three nodal diameters and two nodal circles", and the
+ * second is the one that tells you why it sounds like that.
+ *
+ * `j` is 0 where there is no second index, which is how the panel reads
+ * "this object has only one".
+ */
+export function modeIndices(id, n, opts = {}) {
+  if (id === 'membrane' || id === 'plate') {
+    return rectModes(n, opts.ratio ?? 1).map((m) => [m.a, m.b]);
+  }
+  if (id === 'membrane_round') {
+    // `m` is the nodal diameters; the position within that m's zeros is the
+    // number of nodal circles, counted here because `circleModes` sorts them
+    // together by frequency.
+    const seen = new Map();
+    return circleModes(n).map((e) => {
+      const k = (seen.get(e.m) || 0) + 1;
+      seen.set(e.m, k);
+      return [e.m, k];
+    });
+  }
+  return Array.from({ length: n }, (_, k) => [k + 1, 0]);
+}
+
 // ---------------------------------------------------------------------------
 // Mode shapes, normalised
 // ---------------------------------------------------------------------------

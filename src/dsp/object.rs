@@ -21,6 +21,8 @@
 //! | Membrane | `√((m/Lx)² + (n/Ly)²)` | Russell, Penn State |
 //! | Membrane Round | `j_{m,n}/j_{0,1}` | Abramowitz & Stegun Table 9.5; Russell |
 //! | Plate | `(m/Lx)² + (n/Ly)²` | Leissa §4.1, simply supported |
+//! | Tine | `(β_n/β_1)²`, roots of `cos β · cosh β = −1` | Leissa, NASA SP-160 Table 4.39 |
+//! | Plate Round | `(λ_{m,n}/λ_{0,1})²`, roots of `J_m I_{m+1} + I_m J_{m+1} = 0` | Leissa: `λ² = 10.2158` |
 //! | Pipe, Tube | not here — [`crate::dsp::guide`] | |
 //!
 //! **The plate is the simply supported one, and that is a statement rather
@@ -49,7 +51,7 @@ use std::sync::OnceLock;
 /// The objects, in parameter order. 0…6 are the order Ableton's own device
 /// lists them in, so an index never moves under a saved project; 7 is ours,
 /// because a drum head is a disc and theirs is a rectangle.
-pub const OBJECT_NAMES: [&str; 8] = [
+pub const OBJECT_NAMES: [&str; 10] = [
     "Beam",
     "Marimba",
     "String",
@@ -58,6 +60,8 @@ pub const OBJECT_NAMES: [&str; 8] = [
     "Pipe",
     "Tube",
     "Membrane Round",
+    "Tine",
+    "Plate Round",
 ];
 
 /// Which of the two engines an object needs.
@@ -83,11 +87,17 @@ pub enum Object {
     Pipe,
     Tube,
     MembraneRound,
+    /// A bar clamped at one end and free at the other: a tuning fork's prong,
+    /// a music box's tooth, an electric piano's tine.
+    Tine,
+    /// A disc clamped at its rim, vibrating in flexure rather than under
+    /// tension: a cymbal, a gong, a bell plate.
+    PlateRound,
 }
 
 impl Object {
     /// Every object, in parameter order.
-    pub const ALL: [Object; 8] = [
+    pub const ALL: [Object; 10] = [
         Object::Beam,
         Object::Marimba,
         Object::String,
@@ -96,6 +106,8 @@ impl Object {
         Object::Pipe,
         Object::Tube,
         Object::MembraneRound,
+        Object::Tine,
+        Object::PlateRound,
     ];
 
     /// From the `type` parameter's value, clamped.
@@ -116,7 +128,7 @@ impl Object {
     pub fn is_2d(self) -> bool {
         matches!(
             self,
-            Object::Membrane | Object::Plate | Object::MembraneRound
+            Object::Membrane | Object::Plate | Object::MembraneRound | Object::PlateRound
         )
     }
 
@@ -140,12 +152,12 @@ impl Object {
     pub fn density_exponent(self) -> f32 {
         match self {
             // f ~ n², so N ~ √f.
-            Object::Beam | Object::Marimba => 0.5,
+            Object::Beam | Object::Marimba | Object::Tine => 0.5,
             // f ~ n.
             Object::String | Object::Pipe | Object::Tube => 1.0,
             // Two dimensions and f ~ (m² + n²): the lattice points under a
             // straight line, so N ~ f and the density is constant.
-            Object::Plate => 1.0,
+            Object::Plate | Object::PlateRound => 1.0,
             // Two dimensions and f ~ √(m² + n²): Weyl's law, N ~ f².
             Object::Membrane | Object::MembraneRound => 2.0,
         }
@@ -157,7 +169,11 @@ impl Object {
     /// every other object needs a sine.
     pub fn candidate_cost(self) -> usize {
         match self {
+            // Both discs need a Bessel recurrence per contact where every
+            // other object needs a sine; the clamped plate needs two, since
+            // its shape is a difference of an ordinary and a modified one.
             Object::MembraneRound => 8,
+            Object::PlateRound => 16,
             _ => 1,
         }
     }
@@ -215,6 +231,77 @@ fn beam_eigenvalues() -> &'static [f64; BEAM_MODES] {
 /// The `n`-th free–free beam eigenvalue, one-based.
 pub fn beam_eigenvalue(n: usize) -> f64 {
     beam_eigenvalues()[(n.max(1) - 1).min(BEAM_MODES - 1)]
+}
+
+/// The eigenvalues `βL` of a **clamped–free** bar — a cantilever — which are
+/// the roots of `cos β · cosh β = −1`.
+///
+/// One sign away from the free–free bar's equation and a different instrument
+/// entirely. The free bar's overtones sit at 2.76 and 5.40 times the
+/// fundamental; a cantilever's sit at **6.27 and 17.5**, because its first
+/// root is 1.875 rather than 4.730 while the rest converge on the same
+/// asymptote. That gap is why a tuning fork rings almost pure and a
+/// glockenspiel clangs: the cantilever's second partial is two and a half
+/// octaves up and its third is more than four, so nothing is left in the
+/// range where a listener hears clash.
+///
+/// Solved as `cos β + sech β = 0`, for the same overflow reason as the free
+/// bar's. The first root is below the asymptote rather than above it, so
+/// Newton starts from `(2n−1)π/2` instead.
+fn tine_eigenvalues() -> &'static [f64; BEAM_MODES] {
+    static T: OnceLock<[f64; BEAM_MODES]> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut out = [0.0f64; BEAM_MODES];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let n = i + 1;
+            let mut x = (2 * n - 1) as f64 * std::f64::consts::FRAC_PI_2;
+            for _ in 0..64 {
+                let sech = 1.0 / x.cosh();
+                let f = x.cos() + sech;
+                let df = -x.sin() - sech * x.tanh();
+                if df == 0.0 {
+                    break;
+                }
+                let step = f / df;
+                x -= step;
+                if step.abs() < 1e-15 * x.abs() {
+                    break;
+                }
+            }
+            *slot = x;
+        }
+        out
+    })
+}
+
+/// The `n`-th clamped–free eigenvalue, one-based.
+pub fn tine_eigenvalue(n: usize) -> f64 {
+    tine_eigenvalues()[(n.max(1) - 1).min(BEAM_MODES - 1)]
+}
+
+/// The clamped–free bar's mode shape at `x ∈ [0,1]`, clamped end at zero,
+/// mass-normalised.
+///
+/// `cosh βx − cos βx − σ(sinh βx − sin βx)` with
+/// `σ = (cosh β + cos β)/(sinh β + sin β)`, rearranged the same way and for
+/// the same reason as [`beam_shape`]: `σ → 1`, so `1 − σ` is a difference of
+/// two numbers agreeing to `e^−β` and is worthless in double precision by the
+/// fourth mode, while the `e^{βx}` it multiplies has grown enormous.
+///
+/// Both clamped conditions fall out of the rearrangement rather than being
+/// imposed: `Y(0) = 0` and `Y'(0) = 0` exactly, which is what "clamped"
+/// means and what `tests.rs` checks.
+pub fn tine_shape(n: usize, x: f64) -> f64 {
+    let b = tine_eigenvalue(n);
+    let e = (-b).exp();
+    let (sb, cb) = b.sin_cos();
+    let den = 1.0 - e * e + 2.0 * sb * e;
+    let p = (sb - cb - e) / den;
+    let q = (1.0 + (sb + cb) * e) / den;
+    let sigma = q - p * e;
+    let u = b * x;
+    let (su, cu) = u.sin_cos();
+    p * (b * (x - 1.0)).exp() + q * (-u).exp() - cu + sigma * su
 }
 
 /// The free–free beam's mode shape at `x ∈ [0,1]`, mass-normalised.
@@ -382,6 +469,60 @@ pub fn bessel_jn(m: usize, x: f64) -> f64 {
     sign * want / sum
 }
 
+/// `e^{-x}·I_m(x)`, the modified Bessel function of the first kind, scaled.
+///
+/// Scaled because `I_m` grows like `e^x` and the plate's frequency equation
+/// needs it at arguments in the tens, where the unscaled value overflows a
+/// `f64` around 700 and is useless long before that. Every place it is used
+/// here wants a **ratio** of two of them, and the scaling cancels.
+///
+/// Miller's downward recurrence again — `I_{m−1} = I_{m+1} + (2m/x)I_m` is the
+/// stable direction — normalised by the sum rule `I₀ + 2·Σ I_k = e^x`, which in
+/// scaled terms is simply **1**.
+pub fn bessel_i_scaled(m: usize, x: f64) -> f64 {
+    let ax = x.abs();
+    if ax < 1e-12 {
+        return if m == 0 { 1.0 } else { 0.0 };
+    }
+    let tox = 2.0 / ax;
+    let start = 2 * ((m + (1.5 * ax + 40.0) as usize) / 2) + 8;
+    let mut ip1 = 0.0f64;
+    let mut i = 1.0f64;
+    let mut want = 0.0f64;
+    let mut sum = 0.0f64;
+    for k in (1..=start).rev() {
+        let im1 = ip1 + k as f64 * tox * i;
+        ip1 = i;
+        i = im1;
+        if i.abs() > 1e100 {
+            i *= 1e-100;
+            ip1 *= 1e-100;
+            want *= 1e-100;
+            sum *= 1e-100;
+        }
+        // Unlike the J sum rule, every order counts here and none is doubled
+        // except through the two-sided sum, so the total is I₀ + 2ΣI_k.
+        sum += i;
+        if k - 1 == m {
+            want = i;
+        }
+    }
+    // `i` now holds I₀; the loop added it once along with everything else.
+    let total = 2.0 * sum - i;
+    want / total
+}
+
+/// `I_{m+1}(x) / I_m(x)`, which is what the clamped plate's frequency
+/// equation actually needs and which sits safely in `(0, 1)` for every
+/// positive argument.
+pub fn bessel_i_ratio(m: usize, x: f64) -> f64 {
+    let a = bessel_i_scaled(m, x);
+    if a.abs() < 1e-300 {
+        return 0.0;
+    }
+    bessel_i_scaled(m + 1, x) / a
+}
+
 /// Orders kept in the round membrane's zero table.
 pub const CIRCLE_ORDERS: usize = 128;
 /// Zeros per order kept in the round membrane's zero table.
@@ -472,6 +613,156 @@ pub fn bessel_zero(m: usize, n: usize) -> f64 {
         return 0.0;
     }
     circle_zeros()[m * CIRCLE_ZEROS + (n - 1)]
+}
+
+// ---------------------------------------------------------------------------
+// The clamped circular plate
+// ---------------------------------------------------------------------------
+
+/// Orders kept in the clamped disc's eigenvalue table.
+pub const DISC_ORDERS: usize = 40;
+/// Roots per order.
+pub const DISC_ROOTS: usize = 40;
+
+/// The frequency equation of a circular plate clamped at its rim.
+///
+/// Clamped means the plate cannot move **and** cannot tilt at the edge, which
+/// is two conditions rather than a membrane's one, and it is why this is a
+/// different object rather than a stiffer drum head. Written out, `W = 0` and
+/// `dW/dr = 0` at the rim give
+///
+/// ```text
+///   J_m(λ)·I_{m+1}(λ) + I_m(λ)·J_{m+1}(λ) = 0
+/// ```
+///
+/// which is divided through by `I_m(λ)` here so that nothing enormous is ever
+/// formed: the surviving ratio lies in `(0, 1)` and the rest is ordinary.
+fn disc_equation(m: usize, lambda: f64) -> f64 {
+    bessel_jn(m, lambda) * bessel_i_ratio(m, lambda) + bessel_jn(m + 1, lambda)
+}
+
+/// `λ_{m,n}` for the clamped disc, `n` one-based.
+///
+/// A plate is flexural, so frequency goes as `λ²` where a membrane's goes as
+/// `λ`. That single square is the whole difference between a drum head and a
+/// cymbal: the membrane's partials crowd together as they rise and the
+/// plate's spread apart.
+fn disc_roots() -> &'static Vec<f64> {
+    static T: OnceLock<Vec<f64>> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut out = vec![0.0f64; DISC_ORDERS * DISC_ROOTS];
+        for m in 0..DISC_ORDERS {
+            let mut found = 0usize;
+            // The first root of each order sits a little above `m`; step
+            // finely enough that no sign change is stepped over, and bisect
+            // every one that appears.
+            let step = 0.05;
+            let mut x = (m as f64).max(0.5);
+            let mut prev = disc_equation(m, x);
+            while found < DISC_ROOTS && x < m as f64 + DISC_ROOTS as f64 * 4.0 + 40.0 {
+                let next = x + step;
+                let cur = disc_equation(m, next);
+                if (prev > 0.0) != (cur > 0.0) {
+                    let (mut a, mut b) = (x, next);
+                    let fa_pos = prev > 0.0;
+                    for _ in 0..80 {
+                        let mid = 0.5 * (a + b);
+                        if mid <= a || mid >= b {
+                            break;
+                        }
+                        if (disc_equation(m, mid) > 0.0) == fa_pos {
+                            a = mid;
+                        } else {
+                            b = mid;
+                        }
+                    }
+                    out[m * DISC_ROOTS + found] = 0.5 * (a + b);
+                    found += 1;
+                }
+                x = next;
+                prev = cur;
+            }
+        }
+        out
+    })
+}
+
+/// `λ_{m,n}` from the table, `n` one-based; `0` outside it.
+pub fn disc_root(m: usize, n: usize) -> f64 {
+    if m >= DISC_ORDERS || n == 0 || n > DISC_ROOTS {
+        return 0.0;
+    }
+    disc_roots()[m * DISC_ROOTS + (n - 1)]
+}
+
+/// The clamped disc's radial shape at `r ∈ [0,1]`, before normalisation.
+///
+/// ```text
+///   W(r) = J_m(λr) − [J_m(λ)/I_m(λ)]·I_m(λr)
+/// ```
+///
+/// The bracket is a ratio of two modified Bessel functions, which at these
+/// arguments are enormous individually and perfectly ordinary as a quotient.
+/// Written with the scaled `e^{-x}I_m`, the whole term carries a factor
+/// `e^{λ(r−1)}` that is at most one, so nothing large is ever formed.
+///
+/// `W(1) = 0` exactly, by construction rather than by arithmetic — which is
+/// half of what "clamped" means, and the half a membrane also has. The other
+/// half, `W'(1) = 0`, is what the eigenvalue was solved for.
+fn disc_shape_raw(m: usize, lambda: f64, r: f64) -> f64 {
+    if lambda <= 0.0 {
+        return 0.0;
+    }
+    let denom = bessel_i_scaled(m, lambda);
+    if denom.abs() < 1e-300 {
+        return 0.0;
+    }
+    let scale = (lambda * (r - 1.0)).exp() * bessel_i_scaled(m, lambda * r) / denom;
+    bessel_jn(m, lambda * r) - bessel_jn(m, lambda) * scale
+}
+
+/// The normalisation that makes each clamped-disc mode's mean square one over
+/// the disc, computed once with the roots.
+///
+/// Every other family here has a closed form for this; a clamped plate's
+/// shape is a difference of two Bessel functions and does not, so it is
+/// integrated. That is a one-time cost in a static table rather than
+/// per-block work, and `tests.rs` checks the result the same way it checks
+/// the families that do have one.
+fn disc_norms() -> &'static Vec<f64> {
+    static T: OnceLock<Vec<f64>> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut out = vec![0.0f64; DISC_ORDERS * DISC_ROOTS];
+        const STEPS: usize = 512;
+        for m in 0..DISC_ORDERS {
+            for n in 1..=DISC_ROOTS {
+                let lambda = disc_root(m, n);
+                if lambda <= 0.0 {
+                    continue;
+                }
+                // (1/area) ∫ W² cos²(mθ) dA over the unit disc, which is
+                // 2∫₀¹ W² r dr for m = 0 and half that for m ≥ 1.
+                let mut acc = 0.0f64;
+                for i in 0..=STEPS {
+                    let r = i as f64 / STEPS as f64;
+                    let w = if i == 0 || i == STEPS { 0.5 } else { 1.0 };
+                    let v = disc_shape_raw(m, lambda, r);
+                    acc += w * v * v * r;
+                }
+                let mean = acc / STEPS as f64 * if m == 0 { 2.0 } else { 1.0 };
+                out[m * DISC_ROOTS + (n - 1)] = if mean > 1e-30 { 1.0 / mean.sqrt() } else { 0.0 };
+            }
+        }
+        out
+    })
+}
+
+/// The clamped disc's radial shape, mass-normalised.
+pub fn disc_shape(m: usize, n: usize, r: f64) -> f64 {
+    if m >= DISC_ORDERS || n == 0 || n > DISC_ROOTS {
+        return 0.0;
+    }
+    disc_shape_raw(m, disc_root(m, n), r) * disc_norms()[m * DISC_ROOTS + (n - 1)]
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +876,10 @@ impl Shape {
                     }
                 }
             }
+            Object::Tine => {
+                let b = tine_eigenvalue(i as usize) / tine_eigenvalue(1);
+                b * b
+            }
             Object::String | Object::Pipe | Object::Tube => i as f64,
             Object::Membrane => {
                 // Unit area, so the aspect changes the shape and not the
@@ -599,6 +894,19 @@ impl Shape {
             Object::MembraneRound => {
                 let z = bessel_zero(i as usize, j as usize);
                 if z == 0.0 { 0.0 } else { z / bessel_zero(0, 1) }
+            }
+            Object::PlateRound => {
+                // Flexural, so frequency goes as the **square** of the
+                // eigenvalue where a membrane's goes as the eigenvalue
+                // itself. That square is the whole difference between a drum
+                // head and a cymbal.
+                let l = disc_root(i as usize, j as usize);
+                if l == 0.0 {
+                    0.0
+                } else {
+                    let base = disc_root(0, 1);
+                    (l * l) / (base * base)
+                }
             }
         }
     }
@@ -644,7 +952,7 @@ impl Shape {
         let cap = self.uninharm(max_ratio);
         let a = self.aspect.clamp(0.05, 20.0) as f64;
         match self.object {
-            Object::Beam | Object::Marimba => {
+            Object::Beam | Object::Marimba | Object::Tine => {
                 let mut n = 0usize;
                 while n < BEAM_MODES && self.base_ratio(n as u16 + 1, 0) <= cap {
                     n += 1;
@@ -686,6 +994,21 @@ impl Shape {
                     }
                     let mut n = CIRCLE_ZEROS;
                     while n > 0 && bessel_zero(m, n) > z_cap {
+                        n -= 1;
+                    }
+                    total += n;
+                }
+                total
+            }
+            Object::PlateRound => {
+                let l_cap = cap.max(0.0).sqrt() * disc_root(0, 1);
+                let mut total = 0usize;
+                for m in 0..DISC_ORDERS {
+                    if disc_root(m, 1) > l_cap {
+                        break;
+                    }
+                    let mut n = DISC_ROOTS;
+                    while n > 0 && disc_root(m, n) > l_cap {
                         n -= 1;
                     }
                     total += n;
@@ -737,11 +1060,16 @@ pub struct Walk {
 
 impl Walk {
     pub fn new(shape: Shape, max_ratio: f64) -> Walk {
-        let round = shape.object == Object::MembraneRound;
+        // **Both discs number their angular index from zero**, because the
+        // axisymmetric modes — no nodal diameter at all — are real modes and
+        // are the ones a strike at the centre excites. Starting at one drops
+        // that whole family silently: the object still rings, with its
+        // fundamental missing.
+        let polar = matches!(shape.object, Object::MembraneRound | Object::PlateRound);
         Walk {
             shape,
             max_ratio,
-            i: if round { 0 } else { 1 },
+            i: if polar { 0 } else { 1 },
             j: if shape.object.is_2d() { 1 } else { 0 },
             done: max_ratio < 1.0,
         }
@@ -759,7 +1087,7 @@ impl Iterator for Walk {
         if !object.is_2d() {
             let i = self.i;
             let limit = match object {
-                Object::Beam | Object::Marimba => BEAM_MODES as u16,
+                Object::Beam | Object::Marimba | Object::Tine => BEAM_MODES as u16,
                 _ => u16::MAX - 1,
             };
             if i > limit {
@@ -782,13 +1110,18 @@ impl Iterator for Walk {
         }
 
         let round = object == Object::MembraneRound;
+        let disc = object == Object::PlateRound;
         let i_limit = if round {
             CIRCLE_ORDERS as u16
+        } else if disc {
+            DISC_ORDERS as u16
         } else {
             u16::MAX - 1
         };
         let j_limit = if round {
             CIRCLE_ZEROS as u16
+        } else if disc {
+            DISC_ROOTS as u16
         } else {
             u16::MAX - 1
         };
@@ -845,8 +1178,8 @@ impl Point {
         }
     }
 
-    /// The contact point on a disc: **X is the distance from the centre and
-    /// Y is the angle round the head.**
+    /// The contact point on a disc — a membrane or a plate: **X is the
+    /// distance from the centre and Y is the angle round it.**
     ///
     /// Not a square mapped into a circle, which is the obvious thing and is
     /// wrong twice. It wastes the corners, and worse, it clamps them to the
@@ -908,6 +1241,14 @@ impl Contacts {
                     beam_shape(n, self.right.x as f64) as f32,
                 )
             }
+            Object::Tine => {
+                let n = i as usize;
+                (
+                    tine_shape(n, self.exc.x as f64) as f32,
+                    tine_shape(n, self.left.x as f64) as f32,
+                    tine_shape(n, self.right.x as f64) as f32,
+                )
+            }
             Object::String | Object::Pipe | Object::Tube => {
                 // √2·sin(nπx) has mean square 1 over the length.
                 let k = i as f64 * std::f64::consts::PI;
@@ -926,6 +1267,26 @@ impl Contacts {
                     f(self.exc) as f32,
                     f(self.left) as f32,
                     f(self.right) as f32,
+                )
+            }
+            Object::PlateRound => {
+                let m = i as usize;
+                if disc_root(m, j as usize) <= 0.0 {
+                    return (0.0, 0.0, 0.0);
+                }
+                let th0 = self.exc_polar.1;
+                let at = |p: (f64, f64), angular: bool| {
+                    let radial = disc_shape(m, j as usize, p.0);
+                    if m == 0 || !angular {
+                        radial
+                    } else {
+                        radial * (m as f64 * (p.1 - th0)).cos()
+                    }
+                };
+                (
+                    at(self.exc_polar, false) as f32,
+                    at(self.left_polar, true) as f32,
+                    at(self.right_polar, true) as f32,
                 )
             }
             Object::MembraneRound => {

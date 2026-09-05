@@ -9,6 +9,7 @@
 //! | [`damp`] | the damping law, the decrement, and the resolvability crossover |
 //! | [`bank`] | the mode bank: the coupled form, mode-major, lane-buffered |
 //! | [`select`] | **which** modes to keep, which is the decision this device is about |
+//! | [`preset`] | the factory presets, and the shape every preset has |
 //! | [`guide`] | the waveguide: the air columns, where the reflection sign is the whole difference |
 //! | [`tail`] | the statistical extension above the crossover |
 //! | [`filters`] | the exciter's band-pass, the shelves, and the zero-latency limiter |
@@ -34,7 +35,7 @@
 //! | `tune` | 20 … 4000 Hz, log | 220 | **ours** — theirs serialises as a bare 0…1 and its range is on no file on disk |
 //! | `transpose` | −48 … +48 st | 0 | theirs |
 //! | `fine` | −50 … +50 ct | 0 | theirs |
-//! | `modes` | 4 … 4096, log | 1024 | **improved** — a stated count, where theirs is a four-position quality menu that publishes no number |
+//! | `mode_budget` | 4 … 4096, log | 1024 | **improved** — a stated count, where theirs is a four-position quality menu that publishes no number. Not `modes`, which is the stream, and deliberately not "quality", which is their word for a control that truncates by frequency and then needs a Bleed knob to restore what it threw away |
 //! | `select` | Loudest, Lowest, Log Spread | Loudest | **ours** — the decision this plug-in exists for, made audible |
 //! | `ratio` | 0.2 … 5, log | 1.0 | theirs |
 //! | `bar_tuning` | Marimba 4:1, Xylophone 3:1 | Marimba | **ours** |
@@ -76,24 +77,52 @@
 //! | id | kind | values | rate | contents |
 //! |---|---|---|---|---|
 //! | `meter` | meter | 4 | every block | `[in_l, in_r, out_l, out_r]`, linear peaks, 1.0 = 0 dBFS |
-//! | `modes` | raw, sticky | 384 | on change | 64 partials × `[i, j, hz, db_l, db_r, t60_s]`, ascending in `hz`, terminated by `hz = 0`. For a mode bank these are the **loudest** 64 and `(i, j)` are the mode's own indices; for an air column they are the loop's lowest 64 resonances and `i` is the resonance number |
-//! | `info` | raw | 12 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got, and 1 when it has settled |
+//! | `modes` | raw, sticky | 512 | on change | 64 partials × `[i, j, hz, db_l, db_r, t60_s, db_bare, base_hz]`, ascending in `hz`, terminated by `hz = 0`. For a mode bank these are the **loudest** 64 and `(i, j)` are the mode's own indices; for an air column they are the loop's lowest 64 resonances and `i` is the resonance number. `db_bare` is the level the partial would have had with unit mode shapes at both contacts, so the gap between it and `db_l` is the energy a node **removed**; `base_hz` is where the partial sat before Inharm stretched the series. **A partial with an override is always published**, however quiet the override made it |
+//! | `info` | raw | 13 | every block | `[modes_used, modes_available, crossover_hz, tail_db, limit_gr_db, inharm_b, column_m, loop_ms, open_hz, engine, build, f0_hz, ceiling_hz]` — `engine` is 0 for the mode bank and 1 for the waveguide; `build` is 0…1 for how far a pending mode search has got and 1 when it has settled; `f0_hz` is the sounding fundamental after transpose, fine and the oscillator, which is the number every ratio on the display is divided by; `ceiling_hz` is where the bank runs out. **Any field that does not apply publishes NaN rather than zero** — the air-column fields on a bank, the bank fields on an air column, the limiter's reduction when it is off, and `ceiling_hz` when the bank holds every partial the object has. A real zero and an uncomputed one are indistinguishable to a panel, and a plausible zero reads as a measurement nothing made |
 //! | `response` | curve, sticky | 512 | on change | the engine's own magnitude in dB, 20 Hz … Nyquist log-spaced, normalised to its own peak |
 //!
 //! ## The mode table
 //!
-//! The per-partial overrides live in the **UI store**, under the key
-//! `modes`, as `{"edits":[{"i":3,"cents":-12,"db":-6,"decay":1.5}]}`. `i` is
-//! the partial's position in the `modes` frame, so an edit follows the bar
-//! the user dragged. The store is persisted inside the plug-in's own state,
-//! so a project reloads sounding as it was saved with no editor open, and a
-//! store hook turns each write into a lock-free table the audio thread reads
-//! once per block.
+//! The per-partial overrides live in the **UI store**, under the key `modes`,
+//! as `{"edits":[{"i":3,"j":0,"cents":-12,"db":-6,"decay":1.5}]}`.
+//!
+//! **`i` and `j` are the partial's own indices**, which the `modes` stream
+//! publishes in each frame's first two floats — not a row number. An edit
+//! belongs to *that resonance*: change `Selection` or the mode budget and the
+//! frame becomes a different set of partials in a different order, and an
+//! override keyed by position would silently move to something the user never
+//! touched. `j` is zero for every one-dimensional object.
+//!
+//! The store is persisted inside the plug-in's own state, so a project
+//! reloads sounding as it was saved with no editor open, and a store hook
+//! turns each write into a lock-free table the audio thread reads once per
+//! block.
 //!
 //! Exposing that table costs nothing at runtime and is native to this
 //! architecture and to no other: a modal bank *is* a list of frequency, gain
 //! and decay triples, and every global knob on it exists to generate that
 //! list from a formula.
+//!
+//! ## Presets
+//!
+//! The **factory** set is generated from [`preset`] into the bridge metadata
+//! under `presets`, because a preset here is physics — an object, a damping
+//! law, a bore — and written as a `Settings` struct it cannot fall outside a
+//! range or contradict the object it names. **User** presets are the page's,
+//! in the interface store under `presets`, in the same shape.
+//!
+//! Applying is the page's either way, and that is a fact about hosts rather
+//! than a division of labour: a parameter change has to travel through the
+//! host to be recorded and undoable, and only the editor can do that.
+//!
+//! Every preset is `{v, name, group, description, values, modes}`, with
+//! `values` **keyed by parameter id in plain units** — never an index, which
+//! breaks the moment a parameter is appended. On load every parameter is set,
+//! to `values[id]` where the preset names it and otherwise to its own default,
+//! so a preset fully determines the sound; unknown ids are ignored rather than
+//! refused. `bypass` is never carried. `modes` is mandatory and **always
+//! replaces**, so an empty list clears the user's overrides rather than
+//! leaving them.
 //!
 //! ## Real-time rules
 //!
@@ -110,6 +139,7 @@ pub mod filters;
 pub mod guide;
 pub mod lfo;
 pub mod object;
+pub mod preset;
 pub mod select;
 pub mod source;
 pub mod tail;
@@ -166,17 +196,18 @@ pub fn streams(sr: f32) -> Vec<StreamSpec> {
             .kind(StreamKind::Raw)
             .sticky()
             .meta(json!({
-                "layout": "i,j,hz,db_l,db_r,t60_s",
+                "layout": "i,j,hz,db_l,db_r,t60_s,db_bare,base_hz",
                 "fields": MODE_FIELDS,
                 "max_partials": MAX_EDITS,
                 "terminator": "hz = 0",
-                "note": "the loudest partials for a mode bank, the lowest resonances for an air column"
+                "note": "the loudest partials for a mode bank, the lowest resonances for an air column; \
+                         an edited partial is always here however quiet the edit made it"
             })),
         StreamSpec::new("info", INFO_LEN)
             .name("Readouts")
             .kind(StreamKind::Raw)
             .meta(json!({
-                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz"
+                "layout": "modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz"
             })),
         StreamSpec::new("response", RESPONSE_POINTS)
             .name("Response")
@@ -225,7 +256,7 @@ pub fn param_specs(with_source: bool) -> Vec<ParamSpec> {
             .default(d.fine_cents)
             .unit("ct")
             .group("body"),
-        ParamSpec::new("modes", "Modes")
+        ParamSpec::new("mode_budget", "Modes")
             .range(4.0, bank::MAX_MODES as f32)
             .log()
             .default(d.modes as f32)
@@ -464,10 +495,33 @@ pub fn object_meta() -> Value {
             }
         }
         uses.sort_unstable();
+        // Pipe and Tube are one loop at two settings of one termination, and
+        // the meta says so rather than implying two engines. **Both keep their
+        // own index**: they are the indices the device this one answers uses,
+        // a saved project loads by index, and a user who picks "Tube" has
+        // asked for a tube rather than for a pipe they must then open by hand.
+        // What the engine does is force the far end open for one of them, and
+        // `forces` is that, published so the panel can say it in words.
+        let forces = if *object == Object::Tube {
+            json!({ "opening": 1.0 })
+        } else {
+            Value::Null
+        };
+        let note = match object {
+            Object::Tube => {
+                "a Pipe with its far end fully open: the same loop, one reflection at its extreme"
+            }
+            Object::Pipe => {
+                "an air column with a variable far end, from fully closed to fully open"
+            }
+            _ => "",
+        };
         out.push(json!({
             "id": i,
             "label": OBJECT_NAMES[i],
             "engine": if guide { "waveguide" } else { "bank" },
+            "forces": forces,
+            "note": note,
             // What the contact controls mean on this object. A line has one
             // coordinate, a rectangle has two, and a disc has a radius and an
             // angle rather than an x and a y — mapping a square into a circle
@@ -545,7 +599,7 @@ pub fn param_index(s: &NoobVstWebguiFramework) -> ParamIx {
         tune: ix("tune"),
         transpose: ix("transpose"),
         fine: ix("fine"),
-        modes: ix("modes"),
+        modes: ix("mode_budget"),
         select: ix("select"),
         ratio: ix("ratio"),
         bar_tuning: ix("bar_tuning"),
@@ -639,6 +693,18 @@ pub fn read_settings(audio: &AudioHandle, ix: &ParamIx) -> Settings {
 /// The UI store key the mode table lives under.
 pub const MODES_KEY: &str = "modes";
 
+/// The UI store key the **user's** presets live under. The factory set is in
+/// the bridge metadata instead, because it is generated from the DSP and
+/// cannot be edited; see [`preset`].
+pub const PRESETS_KEY: &str = "presets";
+
+/// A partial's two indices in one word, so an override's identity is read and
+/// written atomically rather than in two halves the audio thread could catch
+/// between.
+fn pack(i: u16, j: u16) -> u32 {
+    ((i as u32) << 16) | j as u32
+}
+
 /// The per-partial override table, shared between whichever thread the page
 /// writes on and the audio thread.
 ///
@@ -648,8 +714,13 @@ pub const MODES_KEY: &str = "modes";
 /// uncommon one costs 192 — and neither costs a lock or an allocation.
 pub struct ModeTable {
     generation: AtomicU32,
+    /// Four words per slot: the partial's identity packed as
+    /// `(i << 16) | j`, then the three values.
     cells: Vec<AtomicU32>,
 }
+
+/// Words per override slot.
+const CELLS: usize = 4;
 
 impl Default for ModeTable {
     fn default() -> Self {
@@ -662,16 +733,14 @@ impl ModeTable {
         let d = ModeEdit::default();
         ModeTable {
             generation: AtomicU32::new(0),
-            cells: (0..MAX_EDITS * 3)
+            cells: (0..MAX_EDITS * CELLS)
                 .map(|i| {
-                    AtomicU32::new(
-                        match i % 3 {
-                            0 => d.cents,
-                            1 => d.db,
-                            _ => d.decay,
-                        }
-                        .to_bits(),
-                    )
+                    AtomicU32::new(match i % CELLS {
+                        0 => pack(d.i, d.j),
+                        1 => d.cents.to_bits(),
+                        2 => d.db.to_bits(),
+                        _ => d.decay.to_bits(),
+                    })
                 })
                 .collect(),
         }
@@ -681,22 +750,43 @@ impl ModeTable {
         self.generation.load(Ordering::Acquire)
     }
 
-    /// Replace the table from the JSON the page stored. Unknown keys, missing
-    /// fields and out-of-range indices are ignored rather than rejected: a
-    /// page from a future version must not be able to silence the plug-in.
+    /// Replace the table from the JSON the page stored.
+    ///
+    /// **`i` and `j` are the partial's own indices**, as the `modes` stream
+    /// publishes them in each frame's first two floats — not a row number. An
+    /// entry with no `i` is ignored; `j` defaults to zero, which is what every
+    /// one-dimensional object uses.
+    ///
+    /// Unknown keys, missing fields and absurd values are ignored or clamped
+    /// rather than rejected: a page from a future version must not be able to
+    /// silence the plug-in.
     pub fn load_json(&self, v: &Value) {
         let mut edits = [ModeEdit::default(); MAX_EDITS];
+        let mut n = 0usize;
         if let Some(list) = v.get("edits").and_then(|e| e.as_array()) {
             for e in list {
+                if n >= MAX_EDITS {
+                    break;
+                }
                 let Some(i) = e.get("i").and_then(|x| x.as_i64()) else {
                     continue;
                 };
-                if i < 0 || i as usize >= MAX_EDITS {
+                if !(0..ModeEdit::NONE as i64).contains(&i) {
                     continue;
                 }
-                let slot = &mut edits[i as usize];
+                let j = e.get("j").and_then(|x| x.as_i64()).unwrap_or(0);
+                if !(0..u16::MAX as i64).contains(&j) {
+                    continue;
+                }
+                let slot = &mut edits[n];
+                slot.i = i as u16;
+                slot.j = j as u16;
                 if let Some(c) = e.get("cents").and_then(|x| x.as_f64()) {
-                    slot.cents = (c as f32).clamp(-1200.0, 1200.0);
+                    // Two octaves either way. A mode table exists to build
+                    // objects nobody shipped, and an octave is not enough
+                    // room for that: putting a string's third partial onto a
+                    // bell's tierce is 1,586 cents down on its own.
+                    slot.cents = (c as f32).clamp(-2400.0, 2400.0);
                 }
                 if let Some(g) = e.get("db").and_then(|x| x.as_f64()) {
                     slot.db = (g as f32).clamp(-60.0, 60.0);
@@ -704,39 +794,51 @@ impl ModeTable {
                 if let Some(t) = e.get("decay").and_then(|x| x.as_f64()) {
                     slot.decay = (t as f32).clamp(0.1, 10.0);
                 }
+                n += 1;
             }
         }
         self.store(&edits);
     }
 
-    /// The table as the page's store holds it, sparse: neutral partials are
-    /// left out.
+    /// The table as the page's store holds it, sparse: unused slots are left
+    /// out.
     pub fn to_json(&self) -> Value {
         let mut edits = [ModeEdit::default(); MAX_EDITS];
         self.read(&mut edits);
         let list: Vec<Value> = edits
             .iter()
-            .enumerate()
-            .filter(|(_, e)| **e != ModeEdit::default())
-            .map(|(i, e)| json!({ "i": i, "cents": e.cents, "db": e.db, "decay": e.decay }))
+            .filter(|e| e.is_set())
+            .map(|e| {
+                json!({
+                    "i": e.i,
+                    "j": e.j,
+                    "cents": e.cents,
+                    "db": e.db,
+                    "decay": e.decay
+                })
+            })
             .collect();
         json!({ "edits": list })
     }
 
     pub fn store(&self, edits: &[ModeEdit; MAX_EDITS]) {
-        for (i, e) in edits.iter().enumerate() {
-            self.cells[i * 3].store(e.cents.to_bits(), Ordering::Relaxed);
-            self.cells[i * 3 + 1].store(e.db.to_bits(), Ordering::Relaxed);
-            self.cells[i * 3 + 2].store(e.decay.to_bits(), Ordering::Relaxed);
+        for (k, e) in edits.iter().enumerate() {
+            self.cells[k * CELLS].store(pack(e.i, e.j), Ordering::Relaxed);
+            self.cells[k * CELLS + 1].store(e.cents.to_bits(), Ordering::Relaxed);
+            self.cells[k * CELLS + 2].store(e.db.to_bits(), Ordering::Relaxed);
+            self.cells[k * CELLS + 3].store(e.decay.to_bits(), Ordering::Relaxed);
         }
         self.generation.fetch_add(1, Ordering::Release);
     }
 
     pub fn read(&self, out: &mut [ModeEdit; MAX_EDITS]) {
-        for (i, e) in out.iter_mut().enumerate() {
-            e.cents = f32::from_bits(self.cells[i * 3].load(Ordering::Relaxed));
-            e.db = f32::from_bits(self.cells[i * 3 + 1].load(Ordering::Relaxed));
-            e.decay = f32::from_bits(self.cells[i * 3 + 2].load(Ordering::Relaxed));
+        for (k, e) in out.iter_mut().enumerate() {
+            let id = self.cells[k * CELLS].load(Ordering::Relaxed);
+            e.i = (id >> 16) as u16;
+            e.j = (id & 0xFFFF) as u16;
+            e.cents = f32::from_bits(self.cells[k * CELLS + 1].load(Ordering::Relaxed));
+            e.db = f32::from_bits(self.cells[k * CELLS + 2].load(Ordering::Relaxed));
+            e.decay = f32::from_bits(self.cells[k * CELLS + 3].load(Ordering::Relaxed));
         }
     }
 }
@@ -768,6 +870,9 @@ pub fn bridge_meta(sr: f32, standalone: bool) -> Value {
         "c_air": guide::C_AIR,
         "modes_key": MODES_KEY,
         "objects": object_meta(),
+        "presets_key": PRESETS_KEY,
+        "preset_version": preset::PRESET_VERSION,
+        "presets": preset::factory_json(),
     })
 }
 

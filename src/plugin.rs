@@ -4,12 +4,22 @@
 //!
 //! How the pieces connect:
 //!
+//! **Everything this file is not** now lives in the framework's `PluginHost`:
+//! the editor, the bridge and the audio handle, the four-step construction
+//! whose order is not interchangeable, the two persistence methods, the
+//! input and output layouts and the vendor constants. What is left is what
+//! only this plug-in can say — its parameters, their order, how they fold
+//! into a settings snapshot, and what `process` does with them.
+//!
 //! * The parameters are nih-plug parameters with the same ids as the
 //!   standalone's specs ([`crate::dsp::param_specs`]), mirrored into the
-//!   bridge by [`NoobVstWebguiFrameworkEditor::with_builder`], so the same
-//!   page drives both. The mirroring samples nih-plug's own mapping into a
-//!   table, so the page's knob is exactly this plug-in's knob rather than a
-//!   second guess at it.
+//!   bridge, so the same page drives both. The mirroring samples nih-plug's
+//!   own mapping into a table, so the page's knob is exactly this plug-in's
+//!   knob rather than a second guess at it.
+//!
+//! * **Their order is append-only from the first release.** A host saves
+//!   automation by index, so inserting a parameter renumbers every one after
+//!   it and silently reassigns a saved project's automation lanes.
 //! * `process` reads a [`Settings`] snapshot from the nih-plug values,
 //!   configures the [`Processor`], runs the block and publishes the streams
 //!   through the audio handle.
@@ -27,14 +37,15 @@
 //!   that line a project would load sounding subtly wrong until somebody
 //!   opened the editor.
 
-use std::collections::BTreeMap;
-use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use include_dir::{Dir, include_dir};
 use nih_plug::prelude::*;
-use noob_vst_webgui_framework::{Assets, AudioHandle, NoobVstWebguiFramework};
-use noob_vst_webgui_framework_nih::{EditorConfig, NoobVstWebguiFrameworkEditor, StoreSlot};
+use noob_vst_webgui_framework::Assets;
+use noob_vst_webgui_framework_nih::{
+    EditorConfig, PluginHost, StoreSlot, UiStoreParams, noob_identity, stereo_or_mono_io,
+    ui_store_fields,
+};
 
 use crate::dsp::{self, ModeTable, Point, Processor, Settings, bank};
 
@@ -378,7 +389,7 @@ unsafe impl Params for NoobResonatorParams {
             (g("tune"), self.tune.as_ptr(), g("body")),
             (g("transpose"), self.transpose.as_ptr(), g("body")),
             (g("fine"), self.fine.as_ptr(), g("body")),
-            (g("modes"), self.modes.as_ptr(), g("body")),
+            (g("mode_budget"), self.modes.as_ptr(), g("body")),
             (g("select"), self.select.as_ptr(), g("body")),
             (g("ratio"), self.ratio.as_ptr(), g("body")),
             (g("bar_tuning"), self.bar_tuning.as_ptr(), g("body")),
@@ -418,14 +429,12 @@ unsafe impl Params for NoobResonatorParams {
         ]
     }
 
-    fn serialize_fields(&self) -> BTreeMap<String, String> {
-        let mut m = BTreeMap::new();
-        self.ui_store.serialize_into(&mut m);
-        m
-    }
+    ui_store_fields!(ui_store);
+}
 
-    fn deserialize_fields(&self, serialized: &BTreeMap<String, String>) {
-        self.ui_store.deserialize_from(serialized);
+impl UiStoreParams for NoobResonatorParams {
+    fn ui_store(&self) -> &StoreSlot {
+        &self.ui_store
     }
 }
 
@@ -482,9 +491,9 @@ impl NoobResonatorParams {
 /// The plug-in.
 pub struct NoobResonator {
     params: Arc<NoobResonatorParams>,
-    editor: Arc<NoobVstWebguiFrameworkEditor>,
-    bridge: NoobVstWebguiFramework,
-    audio: Option<AudioHandle>,
+    /// The editor, the bridge and the audio handle, built in the one order
+    /// that works. See the framework's `PluginHost`.
+    host: PluginHost,
     processor: Processor,
     table: Arc<ModeTable>,
 }
@@ -492,25 +501,26 @@ pub struct NoobResonator {
 impl Default for NoobResonator {
     fn default() -> Self {
         let params = Arc::new(NoobResonatorParams::default());
-        let (editor, bridge) = NoobVstWebguiFrameworkEditor::with_builder(
+        let host = PluginHost::new(
             "noob-resonator",
-            params.as_ref(),
+            &params,
             dsp::streams(48_000.0),
+            // The floor is the smallest size the panel is designed against.
+            // It is not the saturator's: this face carries a ratio axis with
+            // sixty-four partials on it, and below about nine hundred wide the
+            // partials stop being individually clickable, which is the whole
+            // point of the display.
             EditorConfig::new(1100, 700)
                 .size_limits((900, 560), (7680, 4320))
                 .devtools(cfg!(feature = "devtools") || cfg!(debug_assertions))
                 .assets(Assets::Lookup(ui_lookup)),
             |b| b.meta(dsp::bridge_meta(48_000.0, false)),
         );
-        let audio = bridge.take_audio();
-        params.ui_store.attach(&bridge);
         let table = Arc::new(ModeTable::new());
-        dsp::attach_mode_table(&bridge, table.clone());
+        dsp::attach_mode_table(host.bridge(), table.clone());
         NoobResonator {
             params,
-            editor,
-            bridge,
-            audio,
+            host,
             processor: Processor::with_table(48_000.0, table.clone()),
             table,
         }
@@ -519,23 +529,9 @@ impl Default for NoobResonator {
 
 impl Plugin for NoobResonator {
     const NAME: &'static str = "Noob Resonator";
-    const VENDOR: &'static str = "Noob Audio Engineering";
-    const URL: &'static str = env!("CARGO_PKG_HOMEPAGE");
-    const EMAIL: &'static str = "";
-    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+    noob_identity!();
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(2),
-            main_output_channels: NonZeroU32::new(2),
-            ..AudioIOLayout::const_default()
-        },
-        AudioIOLayout {
-            main_input_channels: NonZeroU32::new(1),
-            main_output_channels: NonZeroU32::new(1),
-            ..AudioIOLayout::const_default()
-        },
-    ];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = stereo_or_mono_io!();
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
@@ -547,7 +543,7 @@ impl Plugin for NoobResonator {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        Some(Box::new(self.editor.handle()))
+        Some(self.host.editor())
     }
 
     fn initialize(
@@ -561,13 +557,13 @@ impl Plugin for NoobResonator {
         // deliberately does not run the hook a client write does — so the mode
         // table has to be picked up here, before the first block, or a
         // reloaded project would sound wrong until the editor was opened.
-        if let Some(v) = self.bridge.store_get(dsp::MODES_KEY) {
+        if let Some(v) = self.host.bridge().store_get(dsp::MODES_KEY) {
             self.table.load_json(&v);
         }
         self.processor.configure(&self.params.settings());
         // Zero, unconditionally, at whatever rate the host runs.
         context.set_latency_samples(0);
-        self.bridge.send_json(
+        self.host.bridge().send_json(
             "sample_rate",
             serde_json::json!({ "sample_rate": buffer_config.sample_rate }),
         );
@@ -591,16 +587,27 @@ impl Plugin for NoobResonator {
             let (a, b) = slices.split_at_mut(1);
             self.processor.process(a[0], b[0]);
         } else if channels == 1 {
-            // Mono: run the one channel against a copy of itself and keep the
-            // left result. The two pickup positions still differ, so what
-            // comes back is the left one rather than a mono sum of both.
+            // Mono: run the one channel against a copy of itself and return
+            // the **sum of the two pickups**, not the left one.
+            //
+            // Discarding a pickup would throw away half the object: the two
+            // listening positions are at different points on it and hear
+            // different partials, because striking or listening at 1/k of the
+            // length nulls every k-th one. Summing them is not a compromise
+            // either — it is exactly what the Width control's own zero end
+            // does, where both resonators feed both sides equally. So a mono
+            // instance is the same device with Width closed, which is the one
+            // answer that is a setting of this plug-in rather than a guess.
             let l = &mut *slices[0];
             let mut r = [0.0f32; MONO_SCRATCH];
             let n = l.len().min(r.len());
             r[..n].copy_from_slice(&l[..n]);
             self.processor.process(&mut l[..n], &mut r[..n]);
+            for i in 0..n {
+                l[i] = 0.5 * (l[i] + r[i]);
+            }
         }
-        if let Some(audio) = self.audio.as_mut() {
+        if let Some(audio) = self.host.audio() {
             self.processor.publish(audio);
         }
         ProcessStatus::Normal

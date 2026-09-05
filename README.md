@@ -84,7 +84,11 @@ for that reason among others.
 
 **Solids are a mode bank.** The object vibrates, its motion decomposes into
 normal modes, and each mode is one damped sinusoid. Beam, Marimba, String,
-Membrane, Plate, and a round membrane which is ours.
+Membrane and Plate, plus three that are ours: a **round membrane**, because a
+drum head is a disc; a **tine**, which is a bar clamped at one end and is the
+sound of a tuning fork or an electric piano; and a **round plate**, which is
+the same disc held by its stiffness rather than by tension and is what a cymbal
+is.
 
 **Air columns are a waveguide.** A pipe has no material, no strike point on a
 surface and no mode shapes: the walls are a boundary and what vibrates is the
@@ -114,11 +118,20 @@ decibels, a decay multiplier. The table lives in the interface store, which the
 plug-in persists inside its own state, so a project reloads sounding exactly as
 it was saved with no editor open.
 
+**An override is keyed by the mode's own identity, `(i, j)`, and not by its row
+in the frame.** A user who retunes a partial has edited *that resonance*; if the
+override followed a row, changing Selection or the mode budget would reorder the
+frame underneath and silently reassign every one of them to a partial they never
+touched — and the display would look entirely reasonable while doing it. An
+edited partial is also always published, however quiet the edit made it, so
+turning one down forty decibels does not make it leave the picture being used to
+edit it.
+
 ## The objects
 
 Every series is solved from its own eigenvalue problem rather than copied out of
 a book, and `src/dsp/tests.rs` checks each one against published values it was
-not built from. `scratchpad/resprobe/p1_physics.py` does the same job from
+not built from. `tools/physics_probe.py` does the same job from
 outside the repository, implementing Bessel functions from their integral
 representation and beam eigenvalues by bisection; the worst disagreement between
 the two is **0.0001 cents**.
@@ -133,8 +146,28 @@ the two is **0.0001 cents**.
 | Pipe | `(2n−1)·c/4ℓ` at Opening 0, morphing to all harmonics | the standard air-column result |
 | Tube | `n·c/2ℓ` | the same |
 | **Membrane Round** | `j_{m,n}/j_{0,1}` | Abramowitz & Stegun Table 9.5; Russell |
+| **Tine** | `(β_n/β_1)²`, roots of `cos β · cosh β = −1` | Leissa, NASA SP-160 Table 4.39 |
+| **Plate Round** | `(λ_{m,n}/λ_{0,1})²`, roots of `J_m I_{m+1} + I_m J_{m+1} = 0` | Leissa: `λ² = 10.2158`; A&S Table 9.8 for `I_m` |
 
-Three of those rows are worth a sentence each.
+Five of those rows are worth a sentence each.
+
+**The Plate Round is the object family the plug-in was missing.** A drum head
+and a cymbal are the same shape and not the same instrument: a membrane is held
+by tension and its frequency goes as its eigenvalue, while a plate is held by
+its own stiffness and goes as the **square** of it. So a membrane's partials
+crowd together as they rise and a plate's spread apart — one has a pitch and the
+other has a wash. Clamping is two conditions rather than one, since the rim
+holds the angle as well as the height, and the frequency equation that follows
+mixes ordinary and modified Bessel functions. Its fundamental is the standard
+tabulated `λ² = 10.2158`.
+
+**The Tine is one sign away from the Beam and a different instrument.** A free
+bar's overtones sit at 2.76 and 5.40 times the fundamental; clamp one end and
+they move to **6.27 and 17.5**, because the first eigenvalue drops from 4.730 to
+1.875 while the rest converge on the same asymptote. That gap is the difference
+between a glockenspiel and a tuning fork: with nothing in the range where a bar
+clangs, a tine rings almost pure. It is a tuning fork's prong, a music box's
+tooth and an electric piano's tine.
 
 **The Marimba's third partial is a control, not a decision.** Its first overtone
 is tuned to two octaves and that is agreed; the second is quoted at about 9.2×
@@ -169,7 +202,7 @@ Where it is ours, the table says so. The full list with ids and tapers is in
 | Object | eight | the seven that device has, in its own order, plus the round membrane |
 | Tune | 20 … 4000 Hz | ours: theirs serialises as a bare 0…1 and its range is on no file on disk |
 | Transpose, Fine | ±48 st, ±50 ct | theirs |
-| Modes | 4 … 4096 | **a stated count**, where theirs is a four-position quality menu that publishes no number |
+| Modes (`mode_budget`) | 4 … 4096 | **a stated count**, where theirs is a four-position quality menu that publishes no number. Not called quality: that is their word for a control that truncates by frequency and then needs a Bleed knob to restore what it threw away, and this one spends a budget by contribution |
 | Selection | Loudest, Lowest, Log Spread | ours |
 | Ratio | 0.2 … 5 | the rectangle's aspect; splits the degenerate pairs |
 | Bar Tuning, Third Partial | 4:1 or 3:1; 9.2× or 10× | ours |
@@ -208,6 +241,33 @@ Turning it down stops new signal being processed and leaves whatever is ringing
 to ring out. That device gets this right and it is copied deliberately: a modal
 bank whose tail is chopped by a fader is a modal bank that clicks.
 
+## Presets
+
+Twenty-two of them, a handful per object, generated from the DSP rather than
+written as JSON — so a factory preset cannot name a value outside a control's
+range or an object it is not on, because it is the same `Settings` struct the
+audio thread runs.
+
+A preset carries every parameter **by id**, in the units the panel prints, and
+loading one sets every control — to the preset's value where it has one and to
+the control's own default where it does not. So a preset fully determines the
+sound and cannot leave something behind from whatever was loaded before it.
+`Bypass` is never in a preset.
+
+**A preset carries your retuned partials, and loading one replaces them.** The
+per-partial table is the thing this architecture can do that no other can, so a
+preset system that could not capture it would leave the distinctive feature the
+one thing you cannot save. **Hand Bell** exists to prove the point: it is a
+plain string with five partials moved by hand onto a minor-third bell's own
+series — hum, prime, tierce, quint, nominal — which no combination of the
+global controls can reach.
+
+And two of them are a pair. **A · Loudest Partials** and **B · Lowest
+Partials** are the same membrane at the same 128-mode budget, differing in one
+control, so the argument this plug-in is built on is something you can meet by
+accident rather than by reading about it. A test asserts they differ in that
+one control and no other.
+
 ## Measured
 
 [`docs/BENCHMARK.md`](docs/BENCHMARK.md) is generated by
@@ -223,6 +283,7 @@ bank whose tail is chopped by a fader is a modal bank that clicks.
 | reported latency | **zero, at every sample rate** |
 | cost | about 0.3 ns per mode per sample, stereo, at the portable instruction baseline |
 | which modes: best ordering against worst, 64-mode budget | **68 dB** |
+| an air column, whatever number of harmonics comes out of it | 26 ns per sample, 0.13 % of a core |
 
 ## What this does not claim
 

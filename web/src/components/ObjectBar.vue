@@ -15,10 +15,11 @@
  * cutting until the partials land, and no bare equation gives them.
  */
 import { computed } from 'vue';
-import { ui, useObject, useRes } from '../composables/useResonator.js';
+import { forcesOf, noteOf, ui, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
 
 const r = useRes();
 const object = useObject();
+const meta = useObjectMeta();
 
 /**
  * What the cited equation does not currently describe.
@@ -41,6 +42,8 @@ const object = useObject();
  */
 const farEnd = computed(() => {
   if (object.value.engine !== 'waveguide' || !r.opening) return null;
+  // An object whose far end the engine pins cannot disagree with its name.
+  if (forcesOf(meta.value)?.opening != null) return null;
   const o = r.opening.plain / 100;
   const stopped = object.value.id === 'pipe';
   if (stopped && o < 0.02) return null;
@@ -79,6 +82,7 @@ const caveat = computed(() => {
           <b :class="{ target: object.derivation === 'tuning target' }">{{ object.derivation }}</b>
           · {{ object.source }}
         </p>
+        <p v-if="noteOf(meta)" class="pick__src pick__note">{{ noteOf(meta) }}</p>
         <p v-if="caveat" class="pick__src pick__caveat">{{ caveat }}</p>
       </div>
     </div>

@@ -6,16 +6,22 @@ about three hundred lines of Python written from the published formulae and
 sharing no line with this repository, computes the same series for itself and
 diffs the two.
 
-It lives in the session scratchpad as `resprobe/p1_physics.py`, deliberately
-outside this crate, and is run as:
+It lives at `tools/physics_probe.py`, and is run as:
 
 ```sh
 cargo run --release --bin benchmark -- --dump > series.csv
-python p1_physics.py --compare series.csv
+python tools/physics_probe.py --compare series.csv
 ```
 
-The reason for the separation is on this project's record rather than a matter
-of taste: an audit found **nine tests across five plug-ins** that had been
+**Its independence is in the implementation, not the directory.** It began in a
+session scratchpad on the reasoning that being outside the crate made it
+independent, which confused location with dependence: sharing no line of code
+is what makes it a second opinion, and a scratchpad only makes it a second
+opinion nobody has tomorrow. It is in the repository now and just as
+independent.
+
+The reason for keeping it separate at all is on this project's record rather
+than a matter of taste: an audit found **nine tests across five plug-ins** that had been
 written to assert a model's own output instead of the figure they existed to
 check, one of which compared an estimate with itself. A number published about a
 plug-in's own partial series has to be reproducible by something that could have

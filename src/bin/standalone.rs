@@ -94,6 +94,17 @@ fn audio_thread(
     }
 }
 
+/// Say what went wrong on **both** streams, and leave a non-zero status.
+///
+/// A panic goes to stderr alone, so a caller capturing stdout sees an empty
+/// run and a zero exit and has nothing at all to go on. Whatever kills this
+/// program should be readable wherever the reader happened to be looking.
+fn fail(what: &str) -> ! {
+    println!("noob-resonator standalone: {what}");
+    eprintln!("noob-resonator standalone: {what}");
+    std::process::exit(1);
+}
+
 fn open_browser(url: &str) {
     #[cfg(target_os = "windows")]
     let r = std::process::Command::new("cmd")
@@ -109,6 +120,16 @@ fn open_browser(url: &str) {
 }
 
 fn main() {
+    // Before anything that can fail, so that "it exited with no output" can
+    // only ever mean "it did not start", and never "it started and died
+    // quietly". An hour went today to a silent exit that turned out to be
+    // cargo refusing a *different* binary: `noob-resonator-host` needs
+    // `--features hostapp`, says so as a cargo error rather than as program
+    // output, and sits next to this one in the manifest.
+    println!(
+        "noob-resonator standalone {} — starting",
+        env!("CARGO_PKG_VERSION")
+    );
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut port: Option<u16> = None;
@@ -136,7 +157,9 @@ fn main() {
     let dir = dir.canonicalize().unwrap_or(dir);
 
     let (bridge, ix) = dsp::build_bridge("noob-resonator", SR);
-    let audio = bridge.take_audio().expect("audio handle");
+    let Some(audio) = bridge.take_audio() else {
+        fail("the bridge would not yield its audio handle, so nothing could be published");
+    };
 
     // The store has to be attached before the mode table reads from it, so
     // that a table saved last time is in place before the first block.
@@ -162,8 +185,10 @@ fn main() {
         Some(p) => ServerConfig::default().port(p),
         None => ServerConfig::default().prefer_port(4246),
     };
-    let server =
-        noob_vst_webgui_framework::serve(&bridge, cfg.assets_dir(&dir)).expect("start server");
+    let server = match noob_vst_webgui_framework::serve(&bridge, cfg.assets_dir(&dir)) {
+        Ok(s) => s,
+        Err(e) => fail(&format!("the server would not start: {e}")),
+    };
     println!();
     println!("  noob-resonator standalone     {}", server.url());
     println!("  websocket                     {}", server.ws_url());

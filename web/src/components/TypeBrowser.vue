@@ -45,16 +45,17 @@ const groups = ENGINES.map((e) => ({
  * Take one. The only write in this component, and only when the choice is a
  * change — picking the object already loaded leaves the history alone.
  *
- * An air column also gets its far end put where the name says it is: Pipe and
- * Tube are one engine and one column, and the far end is either a closed
- * boundary or an open one.
+ * **It writes the object and nothing else.** Choosing a Tube used to set
+ * Opening here as well, so that the name and the display agreed; the engine
+ * does that itself now and publishes it as `forces`, which is the better
+ * place for it — one authority for what an object pins, and the panel free to
+ * simply say so.
  */
 function choose(t) {
   if (t.index !== current.value && r.type) {
     r.type.begin();
     r.type.setIndex(t.index);
     r.type.end();
-    if (r.opening && t.engine === 'waveguide') r.opening.setPlain(t.id === 'pipe' ? 0 : 100);
   }
   ui.browsing = false;
 }
@@ -79,7 +80,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
         <p class="browse__lede">
           What you have is still ringing while you look, and nothing changes until you pick one. Each row draws
           where that object’s partials fall, which is the whole difference between them — and the one thing a
-          list of names cannot show you.
+          list of names cannot show you. The rows are drawn at reference settings, so they show what an object
+          <em>is</em> rather than what it would sound like at yours.
         </p>
       </div>
       <!--

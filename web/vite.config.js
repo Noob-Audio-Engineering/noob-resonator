@@ -45,7 +45,28 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       // The plug-in's WebSocket, so the page can talk to the real DSP.
-      '/ws': { target: `ws://127.0.0.1:${serverPort}`, ws: true },
+      //
+      // **The upstream socket is closed explicitly when the browser's goes.**
+      // The proxy does not do that on its own: it opens a connection to the
+      // plug-in for each one the page makes and leaves it open when the page
+      // hangs up, so a client that reconnects — and the framework's does,
+      // with backoff that resets on every successful open — piles up
+      // connections on the engine at several a second. Harmless to the
+      // bridge, and it made the engine's own logs unreadable while somebody
+      // was chasing an unrelated bug, which is reason enough.
+      '/ws': {
+        target: `ws://127.0.0.1:${serverPort}`,
+        ws: true,
+        configure: (proxy) => {
+          proxy.on('proxyReqWs', (proxyReq, _req, socket) => {
+            const drop = () => proxyReq.destroy();
+            socket.once('close', drop);
+            socket.once('error', drop);
+          });
+          // A refused upstream must not take the dev server down with it.
+          proxy.on('error', () => {});
+        },
+      },
       // `/instance` and `/instances` (prefix match), used by the instance menu.
       '/instance': { target: `http://127.0.0.1:${serverPort}` },
     },

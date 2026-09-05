@@ -116,10 +116,16 @@ const MIN_D: f32 = 1e-8;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ModeInfo {
     pub hz: f32,
+    /// Where the partial sat before inharmonicity stretched the series.
+    pub base_hz: f32,
     pub t60: f32,
     /// Peak level at the left pickup, linear.
     pub amp_l: f32,
     pub amp_r: f32,
+    /// What the partial would have reached with unit mode shapes at both
+    /// contacts — its level before the strike and the pickups took their
+    /// share. The gap between this and `amp_l` is the null.
+    pub bare: f32,
     /// The partial's own index in the object's series, which is what a
     /// per-mode edit addresses.
     pub i: u16,

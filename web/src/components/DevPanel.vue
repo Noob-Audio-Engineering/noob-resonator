@@ -18,6 +18,8 @@
  * than by an engine.
  */
 import { computed } from 'vue';
+import { Segmented } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
+import ResKnob from './ResKnob.vue';
 import {
   countText,
   hzText,
@@ -28,8 +30,9 @@ import {
   useInfo,
   useModes,
   useObject,
-  useObjectTable,
+  useObjectMeta,
   useOverrides,
+  useRes,
   useResponse,
 } from '../composables/useResonator.js';
 
@@ -40,8 +43,9 @@ const info = useInfo();
 const response = useResponse();
 const overrides = useOverrides();
 const object = useObject();
-const table = useObjectTable();
+const meta = useObjectMeta();
 const designMode = useDesignMode();
+const r = useRes();
 const fundamental = useFundamental();
 
 /** The first sixteen, which is as many as anyone reads off a table. */
@@ -49,7 +53,7 @@ const rows = computed(() => modes.list.slice(0, 16));
 const peak = computed(() =>
   modes.list.reduce((m, p) => Math.max(m, p.bareDb ?? p.dbL ?? -Infinity), -Infinity),
 );
-const uses = computed(() => (table.value ? table.value[object.value.id]?.uses || [] : null));
+const uses = computed(() => meta.value?.uses || null);
 const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
 </script>
 
@@ -115,6 +119,22 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
         </p>
       </div>
 
+      <!--
+        The standalone's demo source. Absent under a plug-in, because the host
+        is the exciter there — and this device has nothing to say until
+        something strikes it, so with no source and no host the panel is
+        silent and looks broken rather than idle.
+      -->
+      <div v-if="r.srcKind" class="bench__card">
+        <h4 class="cap">Source<span class="why"> · the standalone only</span></h4>
+        <p>Nothing rings until something hits it. These drive the input when there is no host.</p>
+        <div class="bench__source">
+          <Segmented :p="r.srcKind" class="keys keys--tiny" />
+          <ResKnob v-if="r.srcLevel" :p="r.srcLevel" label="Level" :size="42" hint="how hard it strikes" />
+          <ResKnob v-if="r.srcFreq" :p="r.srcFreq" label="Rate" :size="42" hint="strikes a second, not a pitch" />
+        </div>
+      </div>
+
       <div class="bench__card" style="grid-column: span 2; min-width: 0; overflow: auto">
         <h4 class="cap">Partials · the index is what an override addresses</h4>
         <table class="tabular">
@@ -122,15 +142,15 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
             <tr><th>#</th><th>ratio</th><th>Hz</th><th>L dB</th><th>R dB</th><th>bare</th><th>rings</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="p in rows" :key="p.i" :class="{ edited: overrides.byIndex.has(p.i) }">
-              <td>{{ p.i }}</td>
+            <tr v-for="p in rows" :key="p.i" :class="{ edited: overrides.has(p.i, p.j) }">
+              <td>{{ p.j > 0 ? `${p.i},${p.j}` : p.i }}</td>
               <td>{{ ratioText(p.hz / fundamental.hz) }}</td>
               <td>{{ hzText(p.hz) }}</td>
               <td>{{ p.dbL == null ? '—' : (p.dbL - peak).toFixed(1) }}</td>
               <td>{{ p.dbR == null ? '—' : (p.dbR - peak).toFixed(1) }}</td>
               <td>{{ p.bareDb == null ? '—' : (p.bareDb - peak).toFixed(1) }}</td>
               <td>{{ timeText(p.ring) }}</td>
-              <td>{{ overrides.byIndex.has(p.i) ? 'edited' : '' }}</td>
+              <td>{{ overrides.has(p.i, p.j) ? 'edited' : '' }}</td>
             </tr>
           </tbody>
         </table>

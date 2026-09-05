@@ -110,6 +110,20 @@ body {
   color: var(--res-ink); padding: 3px 7px; border-radius: 4px;
   background: var(--res-plate); border: 1px solid var(--res-line);
 }
+/* Bypassed: the one state that explains a silent device, so it is loud. */
+.bar__bypass {
+  font: inherit; font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  margin-left: 4px; padding: 4px 9px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--res-null); background: var(--res-null); color: var(--res-ground);
+}
+.bar__bypass:hover { filter: brightness(1.1); }
+
+/* What is loaded, and a dot when it has moved since. */
+.bar__preset { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; max-width: 20ch; }
+.bar__preset span.bar__dirty {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--res-warn); flex: 0 0 auto;
+}
+
 .bar__level { margin-left: auto; }
 .bar__tools { display: flex; align-items: center; gap: 6px; }
 .bar__state { font-size: 10px; letter-spacing: 0.08em; color: var(--res-dim); text-transform: uppercase; }
@@ -157,6 +171,8 @@ body {
 .pick__src .target { color: var(--res-warn); }
 /* What the cited equation does not cover. Same weight as the citation, because it is part of it. */
 .pick__caveat { color: var(--res-warn); opacity: 0.72; }
+/* The engine's own word about this object, where it has one. */
+.pick__note { color: var(--res-dim); font-style: italic; }
 
 /* --------------------------------------------------------------------------
  * Select: which partials survive
@@ -168,6 +184,7 @@ body {
 
 .sel { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 7px 11px; flex-wrap: wrap; }
 .sel__left { display: flex; flex-direction: column; gap: 5px; flex: 0 0 auto; }
+.sel__keys.is-off { opacity: 0.3; pointer-events: none; }
 .sel__cap { display: flex; align-items: baseline; gap: 7px; }
 .sel__cap .why { font-size: 9.5px; color: var(--res-faint); text-transform: none; letter-spacing: 0; }
 .sel__read { display: flex; flex-direction: column; gap: 1px; flex: 0 0 auto; font-size: 10.5px; }
@@ -237,6 +254,7 @@ body {
 .browse__head { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 16px; padding: 0 2px; }
 .browse__title { margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: 0.06em; }
 .browse__lede { margin: 0; max-width: 92ch; font-size: 12.5px; line-height: 1.45; color: var(--res-dim); }
+.browse__lede em { font-style: italic; color: var(--res-ink); }
 /* The way back out of a whole-page view: a real button, not a dim word. */
 .browse__close {
   margin-left: auto; flex: 0 0 auto;
@@ -293,6 +311,43 @@ body {
 .browse__src b { letter-spacing: 0.06em; text-transform: uppercase; font-size: 9px; font-weight: 600; }
 .browse__src .target { color: var(--res-warn); }
 
+/* One preset per row: the same shape as an object row, so the eye does not
+   have to re-find anything between the two views. */
+.preset {
+  display: flex; align-items: stretch; gap: 8px;
+  border: 1px solid var(--res-line); border-radius: 6px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 42%), var(--res-case);
+}
+.preset:hover { border-color: var(--res-edge); }
+.preset.on { border-color: color-mix(in srgb, var(--res-brass) 62%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--res-brass) 24%, transparent); }
+.preset.paired { border-left: 3px solid color-mix(in srgb, var(--res-warn) 55%, transparent); }
+.preset__pick {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 13px; text-align: left; cursor: pointer;
+  background: none; border: 0; color: inherit; font: inherit;
+}
+.preset__pick:focus-visible { outline: 2px solid var(--res-brass); outline-offset: -2px; }
+.preset__name { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; font-size: 15px; font-weight: 650; }
+.preset__src { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; color: var(--res-faint); }
+.preset__src.factory { color: var(--res-modal); }
+.preset__desc { font-size: 12.5px; color: var(--res-ink); }
+.preset__facts { font-size: 10.5px; color: var(--res-faint); }
+.preset__pair { font-size: 10px; color: var(--res-warn); font-weight: 400; }
+.preset__tools { display: flex; align-items: center; gap: 5px; padding: 0 11px; flex: 0 0 auto; }
+.preset__rename { width: 13ch; font: inherit; font-size: 11px; padding: 4px 6px; border-radius: 4px; background: var(--res-plate); border: 1px solid var(--res-edge); color: var(--res-ink); }
+
+/* Saving: named, described, and explicit about the partial edits. */
+.save { flex: 0 0 auto; padding: 11px 13px; border-radius: 6px; border: 1px solid var(--res-edge); background: var(--res-case); display: flex; flex-direction: column; gap: 9px; }
+.save__row { display: flex; gap: 11px; flex-wrap: wrap; }
+.save__field { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; }
+.save__field--wide { flex: 1 1 260px; min-width: 0; }
+.save__field span { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--res-dim); }
+.save__field input { font: inherit; font-size: 12.5px; padding: 6px 8px; border-radius: 4px; background: var(--res-plate); border: 1px solid var(--res-edge); color: var(--res-ink); }
+.save__check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--res-ink); }
+.save__check i { font-style: normal; color: var(--res-warn); }
+.save__foot { display: flex; align-items: center; gap: 7px; }
+.save__warn { font-size: 11px; color: var(--res-warn); }
+
 @media (max-width: 1000px) {
   .browse__card { grid-template-columns: minmax(110px, 170px) 1fr; gap: 12px; padding: 9px 11px; }
   .browse__name { font-size: 15px; }
@@ -304,7 +359,7 @@ body {
  * The display
  * ------------------------------------------------------------------------ */
 
-.md { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 7px 10px; gap: 5px; }
+.md { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 7px 10px; gap: 5px; }
 .md__head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .md__title { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
 .md__badge {
@@ -313,6 +368,17 @@ body {
 }
 .md__badge.modal { color: var(--res-modal); border-color: color-mix(in srgb, var(--res-modal) 38%, transparent); }
 .md__badge.waveguide { color: var(--res-guide); border-color: color-mix(in srgb, var(--res-guide) 38%, transparent); }
+.md__draw { display: flex; align-items: center; gap: 3px; }
+.md__drawcap { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--res-faint); margin-right: 2px; }
+.md__drawkey {
+  font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+  padding: 3px 7px; border-radius: 3px;
+  border: 1px solid var(--res-line); background: var(--res-plate); color: var(--res-dim);
+}
+.md__drawkey:hover:not(:disabled) { color: var(--res-ink); border-color: var(--res-edge); }
+.md__drawkey:disabled { opacity: 0.35; cursor: default; }
+.md__drawkey.on { background: var(--res-brass); border-color: var(--res-brass); color: var(--res-ground); font-weight: 600; }
+
 .md__facts { margin-left: auto; display: flex; gap: 14px; font-size: 10px; color: var(--res-dim); }
 .md__facts b { font-weight: 600; color: var(--res-ink); }
 
@@ -321,10 +387,24 @@ body {
   background: linear-gradient(180deg, #131920, var(--res-glass));
   border: 1px solid var(--res-line);
   border-radius: 5px;
+  /* The plot clips its own frame, which is what a plot should do. */
   overflow: hidden;
-  min-height: 90px;
+  /*
+   * **No minimum.** A flex child that refuses to shrink is what pushes a
+   * column past its own bounds, and that is what once made this plate spill
+   * onto the deck. The box takes whatever is left; the floor under it is the
+   * page giving the plate room in the first place — the deck is capped so
+   * that it does, and the display drops its own lanes as it gets shorter.
+   */
+  min-height: 0;
 }
-.md__box svg { display: block; width: 100%; height: 100%; }
+.md__box svg {
+  display: block; width: 100%; height: 100%;
+  /* A drag across the plot is a gesture, not a text selection. */
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+/* One tab stop for the whole series; the arrows do the walking. */
+.md__box svg:focus-visible { outline: 1px solid var(--res-brass); outline-offset: -2px; }
 
 /* Clear of the level axis's own gutter, so the 0 dB label is not behind it. */
 /* The engine is still filling the table; the picture is not final yet. */
@@ -361,6 +441,8 @@ body {
 .md__note { margin-left: auto; color: var(--res-faint); }
 /* What the display is short of, named per stream rather than left silent. */
 .md__prov { margin: 3px 0 0; font-size: 10px; color: var(--res-warn); opacity: 0.8; }
+/* A missing field is a gap; the two halves disagreeing is a fault, and reads like one. */
+.md__prov.is-fault { color: var(--res-null); opacity: 1; font-weight: 600; }
 
 /* --------------------------------------------------------------------------
  * The deck
@@ -438,6 +520,7 @@ body {
 }
 .me__head { display: flex; align-items: baseline; gap: 8px; }
 .me__title { font-size: 11.5px; font-weight: 650; }
+.me__title i { font-style: normal; font-weight: 400; color: var(--res-dim); }
 .me__at { font-size: 10px; color: var(--res-dim); }
 .me__x { margin-left: auto; }
 .me__row { display: grid; grid-template-columns: 34px 1fr 58px; align-items: center; gap: 7px; }
@@ -477,6 +560,8 @@ body {
 .bench__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 9px; }
 .bench__card { background: var(--res-plate); border: 1px solid var(--res-line); border-radius: 5px; padding: 7px 9px; }
 .bench__card p { margin: 4px 0 0; font-size: 10.5px; color: var(--res-dim); }
+.bench__source { display: flex; align-items: flex-start; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+.bench__card .why { text-transform: none; letter-spacing: 0; color: var(--res-faint); }
 .bench table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .bench th { text-align: right; font-weight: 500; color: var(--res-faint); padding: 2px 6px 2px 0; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; }
 .bench th:first-child { text-align: left; }
@@ -555,10 +640,6 @@ body {
    * the last thing to give up a pixel.
    */
   .knob__hint { display: none; }
-  .md__legend { display: none; }
-  /* Explanatory prose, and the bench lists the same absences. */
-  .md__prov { display: none; }
-  .md__box { min-height: 84px; }
   /* One line instead of three: the wall is the figure that matters. */
   .sel__read { flex-direction: row; gap: 14px; }
   .sel__k { min-width: 0; }

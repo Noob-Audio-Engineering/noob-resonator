@@ -22,30 +22,37 @@
  * store also carries the table inside the plug-in's saved state, so a project
  * reloads sounding exactly as it was saved with no editor ever opened.
  *
+ * **Undo does not reach these.** The framework's history covers parameters,
+ * and the override table is plug-in state rather than a parameter — which is
+ * what lets it travel with a saved project and be reapplied before the first
+ * block. Rather than build a second history with its own Ctrl+Z semantics,
+ * the way back is Reset, and the footer says so instead of leaving a user to
+ * discover it by pressing Ctrl+Z and watching nothing happen.
+ *
  * Props: `partial` (one entry of the drawn series). Emits: `close`.
  */
 import { computed } from 'vue';
-import { EDIT_LIMITS, hzText, ratioText, timeText, useOverrides } from '../composables/useResonator.js';
+import { EDIT_LIMITS, hzText, partialName, ratioText, timeText, useOverrides } from '../composables/useResonator.js';
 
 const props = defineProps({ partial: { type: Object, required: true } });
 defineEmits(['close']);
 
 const overrides = useOverrides();
-const edit = computed(() => overrides.byIndex.get(props.partial.i) || {});
-const isEdited = computed(() => overrides.byIndex.has(props.partial.i));
+const edit = computed(() => overrides.get(props.partial.i, props.partial.j) || {});
+const isEdited = computed(() => overrides.has(props.partial.i, props.partial.j));
 
 const cents = computed(() => edit.value.cents ?? 0);
 const gain = computed(() => edit.value.db ?? 0);
 const decay = computed(() => edit.value.decay ?? 1);
 
-const set = (patch) => overrides.set(props.partial.i, patch);
+const set = (patch) => overrides.set(props.partial.i, props.partial.j, patch);
 const num = (e) => Number(e.target.value);
 </script>
 
 <template>
-  <div class="me" role="group" :aria-label="`Partial ${partial.i + 1}`">
+  <div class="me" role="group" :aria-label="partialName(partial)" @keydown.escape="$emit('close')">
     <div class="me__head">
-      <span class="me__title">Partial {{ partial.i + 1 }}</span>
+      <span class="me__title">{{ partialName(partial) }}</span>
       <span class="me__at tabular">
         <template v-if="partial.offscreen">no longer in the published set</template>
         <template v-else>
@@ -95,11 +102,11 @@ const num = (e) => Number(e.target.value);
     </label>
 
     <div class="me__foot">
-      <button class="key" type="button" :disabled="!isEdited" @click="overrides.clear(partial.i)">Reset this one</button>
+      <button class="key" type="button" :disabled="!isEdited" @click="overrides.clear(partial.i, partial.j)">Reset this one</button>
       <button class="key" type="button" :disabled="!overrides.count" @click="overrides.clearAll()">
         Reset all {{ overrides.count || '' }}
       </button>
-      <span class="me__note">Saved with the project, not with the editor.</span>
+      <span class="me__note">Saved with the project. Undo does not reach these — Reset does.</span>
     </div>
   </div>
 </template>

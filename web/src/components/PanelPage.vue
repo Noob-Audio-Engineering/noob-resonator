@@ -25,6 +25,7 @@ import ModeDisplay from './ModeDisplay.vue';
 import Deck from './Deck.vue';
 import DevPanel from './DevPanel.vue';
 import TypeBrowser from './TypeBrowser.vue';
+import PresetBrowser from './PresetBrowser.vue';
 import { WINDOW_MIN, ui, useDebug, useWindow } from '../composables/useResonator.js';
 
 const debug = useDebug();
@@ -48,6 +49,7 @@ useWindow();
       of the value of browsing. The panel stays visible and dimmed behind it.
     -->
     <TypeBrowser v-if="ui.browsing" />
+    <PresetBrowser v-else-if="ui.presets" />
     <ResizeGrip class="res__grip" :min="WINDOW_MIN" />
   </div>
 </template>

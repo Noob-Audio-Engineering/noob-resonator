@@ -1001,6 +1001,61 @@ fn cost_section() -> Section {
             "in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128",
         );
     }
+    // The waveguide, and where the two engines cross.
+    {
+        let mut g = guide::Guide::new(SR);
+        g.configure(&guide::Settings {
+            f0: 55.0,
+            opening: 1.0,
+            radius_mm: 20.0,
+            decay: 4.0,
+            tilt_db_oct: -3.0,
+            hit: 0.107,
+            pos_l: 0.213,
+            pos_r: 0.379,
+        });
+        let n = bank::BLOCK;
+        let input = vec![1e-4f32; n];
+        let mut l = vec![0.0f32; n];
+        let mut r = vec![0.0f32; n];
+        let reps = 40_000;
+        let mut lowest = f64::INFINITY;
+        for _ in 0..5 {
+            let t0 = Instant::now();
+            for _ in 0..reps {
+                g.process(&input, &mut l, &mut r);
+            }
+            lowest = lowest.min(t0.elapsed().as_secs_f64());
+        }
+        std::hint::black_box(&l);
+        let per = lowest * 1e9 / (n * reps) as f64;
+        let partials = g.resonances().len();
+        s.note(
+            format!("an air column at 55 Hz, {partials} resonances published, stereo"),
+            format!(
+                "{per:.3} ns/sample — {:.2} % of one core at 48 kHz, whatever number of harmonics come out",
+                per * 1e-9 * SR as f64 * 100.0
+            ),
+            "in-house; a delay loop costs its index arithmetic and its taps, not its partials",
+        );
+
+        // Where a loop stops being cheaper than a bank. The bank's rate is
+        // per mode, so the crossing is a division rather than a search.
+        let per_mode = best(1024, bank::BLOCK, false);
+        let cross = per / per_mode;
+        s.note(
+            "how many partials a mode bank can afford for the price of the whole air column",
+            format!("{cross:.0} partials"),
+            "in-house. `MODAL.md`'s own loop broke even at about twelve, and the difference is              the contact combs: this one carries six fractional taps per sample — two reflections,              two injections and two pickups — where a bare loop carries one",
+        );
+        s.note(
+            "and why that decides nothing on its own",
+            "a bar has 28 partials and an inharmonic series, so no waveguide can represent it at any price;              an air column has hundreds and they are exactly harmonic, so no bank should have to"
+                .to_string(),
+            "the two series, from `src/dsp/object.rs` and `src/dsp/guide.rs`",
+        );
+    }
+
     // The real thing, through the engine.
     for modes in [256usize, 1024, 4096] {
         let set = Settings {
@@ -1104,6 +1159,8 @@ fn settle_section() -> Section {
         (3, 110.0, 4096),
         (3, 20.0, 4096),
         (7, 55.0, 4096),
+        (8, 55.0, 4096),
+        (9, 55.0, 4096),
     ] {
         let set = Settings {
             object,
@@ -1292,14 +1349,14 @@ fn main() {
 
     out.push_str(
         "\n## The out-of-tree probe\n\n\
-         `scratchpad/resprobe/p1_physics.py` computes every partial series again from the published \
+         `tools/physics_probe.py` computes every partial series again from the published \
          formulae, in a language that cannot link against this one. Bessel functions come from the \
          integral representation `J_m(x) = (1/π)∫₀^π cos(mτ − x sin τ)dτ`, beam eigenvalues from \
          bisection on `cos β − sech β = 0`, and the membrane and plate lattices from their closed \
          forms. It checks itself against Leissa's Table 4.23, Abramowitz and Stegun's Table 9.5, \
          Russell's circular-membrane ratios and Lehtonen's inharmonicity figures **before** it is \
          used on anything of ours, and then diffs `benchmark --dump` against its own arithmetic.\n\n\
-         Run it with `python p1_physics.py --compare series.csv`. The worst disagreement it has \
+         Run it with `python tools/physics_probe.py --compare series.csv`. The worst disagreement it has \
          found is **0.0001 cents**, across every object and every partial the two both cover.\n",
     );
 

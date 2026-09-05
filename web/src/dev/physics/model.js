@@ -25,6 +25,7 @@ import {
   loopDelay,
   nodeWeight,
   openingPhase,
+  modeIndices,
   ratiosOf,
   stretch,
 } from './resonators.js';
@@ -81,13 +82,19 @@ export function computePartials(s) {
   // applied afterwards, and running the two together is what once had the
   // panel name the wrong limit as a wall.
   const base = ratiosOf(o.id, PAGE_MAX_PARTIALS, opts);
+  const indices = modeIndices(o.id, PAGE_MAX_PARTIALS, opts);
   const shaped = guide ? base : stretch(base, s.inharm);
   const detune = 2 ** ((SPREAD_CENTS * s.spread) / 1200);
-  const byIndex = new Map((s.edits || []).map((e) => [e.i, e]));
+  // Overrides are keyed by the mode's own identity, not by where it lands in
+  // a list that Selection reorders — and on a surface that identity is a
+  // *pair*, because two different modes routinely share a first index.
+  const key = (i, j) => `${i}:${j || 0}`;
+  const byIndex = new Map((s.edits || []).map((e) => [key(e.i, e.j), e]));
 
   const out = [];
   for (let i = 0; i < shaped.length; i++) {
-    const edit = byIndex.get(i);
+    const [mi, mj] = indices[i] || [i + 1, 0];
+    const edit = byIndex.get(key(mi, mj));
     const r = shaped[i] * (edit?.cents ? 2 ** (edit.cents / 1200) : 1);
     const hz = s.f0 * r;
     if (hz > s.nyquist) break;
@@ -96,7 +103,11 @@ export function computePartials(s) {
     const pickL = weight(o, i, s.posL, s.posLY, opts);
     const pickR = weight(o, i, s.posR, s.posRY, opts);
     out.push({
-      i,
+      /** Position in the computed series, used for the node weights only. */
+      row: i,
+      /** The mode's own identity. `mj` is 0 on an object that has only one index. */
+      mi,
+      mj,
       hz,
       /** Where this partial sits before Inharm and before any override moved it. */
       baseHz: s.f0 * base[i],
@@ -178,13 +189,17 @@ export function selectPartials(list, mode, n) {
  * taking the lowest sixty-four to publish would show the panel a cliff that
  * is not there.
  */
-export function loudest(list, n = PUBLISHED) {
+export function loudest(list, n = PUBLISHED, edited = null) {
   if (list.length <= n) return list;
-  return list
-    .slice()
-    .sort((a, b) => Math.max(b.dbL, b.dbR) - Math.max(a.dbL, a.dbR))
-    .slice(0, n)
-    .sort((a, b) => a.hz - b.hz);
+  const ranked = list.slice().sort((a, b) => Math.max(b.dbL, b.dbR) - Math.max(a.dbL, a.dbR));
+  // **An edited mode is always published**, however quiet the edit made it —
+  // which is what the engine does. Without it, turning a partial down drops
+  // it out of the picture that shows the turning down, and drawing a falling
+  // shape across the series makes most of what you drew disappear.
+  const keep = [];
+  const rest = [];
+  for (const p of ranked) ((edited && edited.has(`${p.mi}:${p.mj || 0}`)) ? keep : rest).push(p);
+  return [...keep, ...rest.slice(0, Math.max(0, n - keep.length))].sort((a, b) => a.hz - b.hz);
 }
 
 /**
@@ -240,6 +255,50 @@ export function guideResponse(s, points) {
     if (hi > peak) peak = hi;
   }
   return raw.map((v) => clampDb(db(v / peak)));
+}
+
+/**
+ * A mode bank's own magnitude response — the thing the bars cannot show.
+ *
+ * Where the partials sit is one half of what a resonator is; **how wide each
+ * resonance is** is the other, and that is what Decay and Material are doing.
+ * Two objects with identical partials and different ring times draw identical
+ * bars and sound nothing alike, so the curve goes behind them.
+ *
+ * Each mode is one two-pole resonator, so its magnitude near its own
+ * frequency is a Lorentzian whose half-width is the decay rate over 2π: an
+ * amplitude falling as `e^−σt` reaches −60 dB at `T60`, so `σ = 3 ln10 / T60`.
+ * Summed in power, because the partials are incoherent for this purpose, and
+ * normalised to the peak — which is the layout the engine's `response`
+ * stream declares.
+ */
+export function bankResponse(s, list, points) {
+  const fLo = 20;
+  const step = (s.nyquist / fLo) ** (1 / (points - 1));
+  const peaks = list.map((p) => ({
+    hz: p.hz,
+    // Power at the peak, from the level the strike and the pickups left it.
+    a: 10 ** (Math.max(p.dbL, p.dbR) / 10),
+    // Half-width in hertz. Floored so a very long ring stays drawable at
+    // this resolution rather than becoming an invisible spike.
+    w: Math.max(0.5, (3 * Math.LN10) / Math.max(1e-4, p.ring) / (2 * Math.PI)),
+  }));
+  const out = new Array(points);
+  let peak = 1e-12;
+  for (let i = 0; i < points; i++) {
+    const f = fLo * step ** i;
+    let acc = 0;
+    for (const q of peaks) {
+      const d = f - q.hz;
+      // Skip the ones too far away to matter; a Lorentzian is negligible
+      // past a few hundred half-widths and this loop is 512 by 64.
+      if (Math.abs(d) > q.w * 400 && Math.abs(d) > f * 0.5) continue;
+      acc += (q.a * q.w * q.w) / (d * d + q.w * q.w);
+    }
+    out[i] = acc;
+    if (acc > peak) peak = acc;
+  }
+  return out.map((v) => clampDb(db(Math.sqrt(v / peak))));
 }
 
 /** How long the air column is, and how long its round trip takes. */

@@ -12,7 +12,7 @@
 //! Russell, Lehtonen and Fletcher, and the behaviour is checked by
 //! **measuring the audio** — a frequency read off zero crossings, a decay
 //! fitted to an envelope — rather than by reading the coefficients back out
-//! of the object that wrote them. `scratchpad/resprobe/p1_physics.py` does
+//! of the object that wrote them. `tools/physics_probe.py` does
 //! the same job from outside the repository, implementing Bessel functions
 //! from their integral representation and beam eigenvalues by bisection, and
 //! agrees with every series here to under a ten-thousandth of a cent.
@@ -20,7 +20,8 @@
 use super::*;
 use crate::dsp::bank::{Bank, ModeInfo};
 use crate::dsp::object::{
-    Object, Point, Shape, Walk, bar_targets, beam_eigenvalue, beam_shape, bessel_jn, bessel_zero,
+    Contacts, Object, Point, Shape, Walk, bar_targets, beam_eigenvalue, beam_shape,
+    bessel_i_scaled, bessel_jn, bessel_zero, disc_root, disc_shape, tine_eigenvalue, tine_shape,
 };
 
 const SR: f32 = 48_000.0;
@@ -1108,14 +1109,45 @@ fn dry_wet_gates_the_input_and_does_not_chop_the_tail() {
     );
 }
 
+/// Settle the device and return its published partials as `(i, j, hz)`.
+fn published(set: &Settings, table: Option<Arc<ModeTable>>) -> Vec<(u16, u16, f32)> {
+    let mut p = match table {
+        Some(t) => Processor::with_table(SR, t),
+        None => Processor::new(SR),
+    };
+    p.configure(set);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    let mut guard = 0;
+    while p.engine().info_frame()[10] < 1.0 && guard < 40_000 {
+        p.process(&mut l, &mut r);
+        guard += 1;
+    }
+    for _ in 0..32 {
+        p.process(&mut l, &mut r);
+    }
+    let f = p.engine().modes_frame();
+    let mut out = Vec::new();
+    for k in 0..MAX_EDITS {
+        let base = k * MODE_FIELDS;
+        let hz = f[base + 2];
+        if hz <= 0.0 {
+            break;
+        }
+        out.push((f[base] as u16, f[base + 1] as u16, hz));
+    }
+    out
+}
+
 #[test]
 fn the_mode_table_reaches_the_audio() {
     // Exposing frequency, gain and decay per partial costs nothing at runtime
     // and is native to this architecture and to no other. This checks that an
     // edit written the way the page writes it actually moves a partial.
     let table = Arc::new(ModeTable::new());
-    table.load_json(&json!({ "edits": [{ "i": 0, "cents": 700.0, "db": 0.0, "decay": 1.0 }] }));
-    let mut p = Processor::with_table(SR, table.clone());
+    table.load_json(
+        &json!({ "edits": [{ "i": 1, "j": 0, "cents": 700.0, "db": 0.0, "decay": 1.0 }] }),
+    );
     let set = Settings {
         object: 2,
         tune_hz: 220.0,
@@ -1124,30 +1156,116 @@ fn the_mode_table_reaches_the_audio() {
         hit: Point::new(0.13, 0.13),
         pos_l: Point::new(0.29, 0.29),
         pos_r: Point::new(0.29, 0.29),
-        bright_db_oct: -24.0f32.max(-6.0),
         ..Settings::default()
     };
-    p.configure(&set);
-    let mut l = vec![0.0f32; bank::BLOCK];
-    let mut r = vec![0.0f32; bank::BLOCK];
-    for _ in 0..64 {
-        p.process(&mut l, &mut r);
-    }
-    let frame = p.engine().modes_frame();
-    // The first published partial should now be a fifth above the
-    // fundamental: 220 × 2^(7/12) = 329.6 Hz.
-    let hz = frame[2];
+    let rows = published(&set, Some(table.clone()));
+    let fundamental = rows
+        .iter()
+        .find(|(i, j, _)| *i == 1 && *j == 0)
+        .expect("the fundamental is published");
+    // 220 x 2^(7/12) = 329.63 Hz.
     assert!(
-        (hz - 329.63).abs() < 1.0,
-        "a +700 cent edit on partial 0 put it at {hz} Hz instead of 329.63"
+        (fundamental.2 - 329.63).abs() < 1.0,
+        "a +700 cent edit on partial 1 put it at {} Hz instead of 329.63",
+        fundamental.2
     );
-    // And the round trip through the store's own JSON keeps it.
-    let json = table.to_json();
+    // And the round trip through the store's own JSON keeps it, identity and
+    // all.
     let back = ModeTable::new();
-    back.load_json(&json);
+    back.load_json(&table.to_json());
     let mut edits = [ModeEdit::default(); MAX_EDITS];
     back.read(&mut edits);
+    assert_eq!(edits[0].i, 1);
+    assert_eq!(edits[0].j, 0);
     assert!((edits[0].cents - 700.0).abs() < 1e-3);
+}
+
+#[test]
+fn an_edit_follows_its_partial_when_the_selection_changes() {
+    // The ruling this file exists to hold. An override is keyed by the mode's
+    // own identity, `(i, j)`, and **not** by its row in the published frame.
+    //
+    // The failure it prevents is the kind this project keeps catching late: a
+    // user drags a bar, retunes it, then changes Selection. The frame is now a
+    // different set of partials in a different order, so a position-keyed
+    // override would silently move to a resonance they never touched — and the
+    // display would look entirely reasonable while doing it.
+    let base = Settings {
+        object: 3,      // Membrane: far more partials than the budget, so the
+        tune_hz: 440.0, // ordering genuinely changes which are published.
+        modes: 32,
+        decay_s: 2.0,
+        ..Settings::default()
+    };
+    let loud = Settings { order: 0, ..base };
+    let low = Settings { order: 1, ..base };
+
+    let plain_loud = published(&loud, None);
+    let plain_low = published(&low, None);
+    assert!(plain_loud.len() > 8 && plain_low.len() > 8);
+
+    // Pick a partial the two orderings both publish but at **different rows**,
+    // which is what makes the test able to fail.
+    let mut chosen = None;
+    for (pos, (i, j, _)) in plain_loud.iter().enumerate() {
+        if let Some(other) = plain_low.iter().position(|(a, b, _)| a == i && b == j)
+            && other != pos
+        {
+            chosen = Some((*i, *j, pos, other));
+            break;
+        }
+    }
+    let (ei, ej, row_loud, row_low) =
+        chosen.expect("some partial is published at two different rows");
+
+    let table = Arc::new(ModeTable::new());
+    table.load_json(&json!({ "edits": [{ "i": ei, "j": ej, "cents": 700.0 }] }));
+    let edited_loud = published(&loud, Some(table.clone()));
+    let edited_low = published(&low, Some(table.clone()));
+
+    // The edited partial moved, under both orderings, by the same amount.
+    for (label, plain, edited) in [
+        ("Loudest", &plain_loud, &edited_loud),
+        ("Lowest", &plain_low, &edited_low),
+    ] {
+        let was = plain
+            .iter()
+            .find(|(i, j, _)| *i == ei && *j == ej)
+            .expect("the partial is there before the edit")
+            .2;
+        let now = edited
+            .iter()
+            .find(|(i, j, _)| *i == ei && *j == ej)
+            .expect("the partial is still there after the edit")
+            .2;
+        let moved = cents(now, was);
+        assert!(
+            (moved - 700.0).abs() < 1.0,
+            "{label}: partial ({ei},{ej}) moved {moved:.1} cents, not 700"
+        );
+    }
+
+    // And nothing else moved. Under Lowest the edited partial sits at a
+    // different row from the one it had under Loudest, so a position-keyed
+    // override would have shifted whatever is at that row instead — this is
+    // the assertion that catches it.
+    let _ = row_loud;
+    let victim = plain_low[row_loud];
+    assert_ne!(
+        (victim.0, victim.1),
+        (ei, ej),
+        "the two rows must hold different partials for this test to mean anything"
+    );
+    let after = edited_low
+        .iter()
+        .find(|(i, j, _)| *i == victim.0 && *j == victim.1)
+        .expect("the partial at the old row is still published");
+    assert!(
+        cents(after.2, victim.2).abs() < 1.0,
+        "the partial at row {row_loud} moved {:.1} cents and nobody edited it",
+        cents(after.2, victim.2)
+    );
+    let _ = row_low;
 }
 
 #[test]
@@ -1160,7 +1278,7 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
         "tune",
         "transpose",
         "fine",
-        "modes",
+        "mode_budget",
         "select",
         "ratio",
         "bar_tuning",
@@ -1206,6 +1324,16 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
     let st = streams(SR);
     assert_eq!(st[STREAM_IX.meter].capacity, METER_LEN);
     assert_eq!(st[STREAM_IX.modes].capacity, MAX_EDITS * MODE_FIELDS);
+    assert_eq!(
+        MODE_FIELDS, 8,
+        "i, j, hz, db_l, db_r, t60_s, db_bare, base_hz"
+    );
+    assert_eq!(INFO_LEN, 13);
+    // `modes` is the stream; the parameter that spends the budget is
+    // `mode_budget`. Two things called the same thing on one wire is a
+    // collision somebody will hit, and the panel agent hit it.
+    assert!(streams(SR).iter().any(|x| x.id == "modes"));
+    assert!(!specs.iter().any(|x| x.id == "modes"));
     assert_eq!(st[STREAM_IX.info].capacity, INFO_LEN);
     assert_eq!(st[STREAM_IX.response].capacity, RESPONSE_POINTS);
     // Every object names the controls it uses, so the panel greys out from
@@ -1277,30 +1405,48 @@ fn the_store_hook_carries_an_edit_to_the_audio_thread() {
     bridge
         .store_set(
             MODES_KEY,
-            json!({ "edits": [{ "i": 2, "cents": -50.0, "db": -3.0, "decay": 2.0 }] }),
+            json!({ "edits": [{ "i": 7, "j": 3, "cents": -50.0, "db": -3.0, "decay": 2.0 }] }),
         )
         .expect("the store took the table");
     assert_ne!(table.generation(), before, "the hook did not fire");
 
     let mut edits = [ModeEdit::default(); MAX_EDITS];
     table.read(&mut edits);
-    assert!((edits[2].cents + 50.0).abs() < 1e-3);
-    assert!((edits[2].db + 3.0).abs() < 1e-3);
-    assert!((edits[2].decay - 2.0).abs() < 1e-3);
-    assert_eq!(edits[0], ModeEdit::default(), "a sparse table stays sparse");
+    // Slots are filled in the order the page listed them; what identifies an
+    // override is `(i, j)`, never where it sits in this array.
+    assert_eq!(edits[0].i, 7);
+    assert_eq!(edits[0].j, 3);
+    assert!((edits[0].cents + 50.0).abs() < 1e-3);
+    assert!((edits[0].db + 3.0).abs() < 1e-3);
+    assert!((edits[0].decay - 2.0).abs() < 1e-3);
+    assert!(edits[0].matches(7, 3));
+    assert!(!edits[0].matches(7, 0), "j is part of the identity");
+    assert!(!edits[1].is_set(), "a sparse table stays sparse");
 
     // Nonsense from a future version of the page must not be able to silence
     // the plug-in: an unknown key, an index out of range and a wild value are
     // all ignored rather than rejected.
     table.load_json(&json!({
         "edits": [
-            { "i": 9999, "cents": 1.0 },
+            { "j": 4, "cents": 1.0 },
             { "i": 1, "cents": 1e9, "who": "knows" },
         ],
         "future": true
     }));
     table.read(&mut edits);
-    assert!(edits[1].cents <= 1200.0, "an absurd offset was not clamped");
+    assert!(
+        !edits[0].matches(0, 4),
+        "an entry with no `i` addresses nothing"
+    );
+    assert_eq!(edits[0].i, 1, "the entry that named a partial survived");
+    // Two octaves either way, widened from one so a partial can be moved onto
+    // another object's series — a string's third partial reaches a bell's
+    // tierce only 1,586 cents down.
+    assert!(edits[0].cents <= 2400.0, "an absurd offset was not clamped");
+    assert!(
+        edits[0].cents >= 2399.0,
+        "and it was clamped to the new limit"
+    );
 
     // And every parameter the specs declare resolves on a real bridge, so an
     // id can never drift between the two halves of the contract.
@@ -1310,6 +1456,751 @@ fn the_store_hook_carries_an_edit_to_the_audio_thread() {
             bridge.index_of(&spec.id).is_some(),
             "the bridge has no parameter `{}`",
             spec.id
+        );
+    }
+}
+
+#[test]
+fn the_beam_ratio_everyone_quotes_is_a_truncation_and_not_a_rounding() {
+    // The free bar's second partial is exactly 2.756538507. Every reference
+    // prints the series as "1 : 2.756 : 5.404 : 8.933", and the third and
+    // fourth of those are correctly rounded while **2.756 is a truncation** —
+    // rounded properly it is 2.757.
+    //
+    // This test exists so that nobody seeing 2.757 come out of the solver
+    // "fixes" it toward the quotation. The solver is right and the quotation
+    // is short by half a thousandth. Found by the panel agent, solving the
+    // equation rather than copying the figure.
+    let shape = Shape {
+        object: Object::Beam,
+        ..Shape::default()
+    };
+    let exact = shape.ratio(2, 0);
+    assert!(
+        (exact - 2.756_538_507).abs() < 1e-9,
+        "the second partial is {exact}, and the roots of cos x cosh x = 1 give 2.756538507"
+    );
+    assert_eq!(format!("{exact:.3}"), "2.757");
+    assert_ne!(format!("{exact:.3}"), "2.756");
+    // The two the literature does round correctly, for contrast.
+    assert_eq!(format!("{:.3}", shape.ratio(3, 0)), "5.404");
+    assert_eq!(format!("{:.3}", shape.ratio(4, 0)), "8.933");
+}
+
+#[test]
+fn the_marimba_is_the_one_object_with_no_equation_to_check_it_against() {
+    // Every other object's series is the solution of an eigenvalue problem, so
+    // a second implementation can disagree with it and the out-of-tree probe
+    // does exactly that. **An arch-cut bar has no such solution.** Its ratios
+    // are a target a maker works toward by removing material until partials
+    // two and three land, so there is nothing for a solver to solve and
+    // nothing for the probe to check.
+    //
+    // What can be asserted is what the literature states — the targets
+    // themselves — and that the engine hits them exactly rather than
+    // approximately. Anything more would be a fabricated tolerance around a
+    // number nobody solved for, which is the failure this file exists to
+    // avoid.
+    let marimba = Shape {
+        object: Object::Marimba,
+        ..Shape::default()
+    };
+    assert_eq!(marimba.ratio(2, 0), 4.0, "two octaves, exactly, not fitted");
+    assert_eq!(marimba.ratio(3, 0), 9.2, "Woodhouse's figure, exactly");
+    let xylophone = Shape {
+        object: Object::Marimba,
+        bar_tuning: 1,
+        ..Shape::default()
+    };
+    assert_eq!(xylophone.ratio(2, 0), 3.0, "a twelfth, exactly");
+
+    // The two sources for the third partial differ by close to a whole tone
+    // at that partial. It is a builder's choice — how deep the arch is cut —
+    // and **averaging them would describe a bar nobody has made**, so both are
+    // exposed and neither is picked for the user.
+    let rossing = Shape {
+        object: Object::Marimba,
+        bar_third: 1,
+        ..Shape::default()
+    };
+    assert_eq!(rossing.ratio(3, 0), 10.0);
+    let apart = cents(10.0, 9.2);
+    assert!(
+        apart > 120.0 && apart < 160.0,
+        "the two sources are {apart:.0} cents apart at the third partial"
+    );
+
+    // And the caveat that is easy to lose: the **mode shapes** are still the
+    // uniform bar's. The arch moves those too and nothing published describes
+    // the cut, so a marimba's node positions are the beam's and are marked as
+    // modelling wherever they are used.
+    let beam = Shape {
+        object: Object::Beam,
+        ..Shape::default()
+    };
+    let c_bar = Contacts::new(
+        marimba,
+        Point::new(0.3, 0.0),
+        Point::new(0.3, 0.0),
+        Point::new(0.3, 0.0),
+    );
+    let c_beam = Contacts::new(
+        beam,
+        Point::new(0.3, 0.0),
+        Point::new(0.3, 0.0),
+        Point::new(0.3, 0.0),
+    );
+    assert_eq!(c_bar.psi(2, 0).0, c_beam.psi(2, 0).0);
+}
+
+#[test]
+fn a_drum_head_is_pinned_at_its_rim_and_free_at_its_centre() {
+    // Two physical checks on the round membrane's mode shapes that its
+    // frequencies cannot give: the rim is a node for **every** mode, because
+    // the head is clamped there, and the centre is an antinode only for the
+    // circularly symmetric ones — which is why striking a drum dead centre
+    // thins it to those and is the reason the disc's contact controls are a
+    // radius and an angle rather than an x and a y.
+    //
+    // Handed over by the panel agent, whose own Bessel solver reproduced them
+    // independently before this engine existed.
+    for (m, n) in [(0u16, 1u16), (0, 2), (1, 1), (2, 1), (3, 2), (5, 3)] {
+        let shape = Shape {
+            object: Object::MembraneRound,
+            ..Shape::default()
+        };
+        let rim = Contacts::new(
+            shape,
+            Point::new(1.0, 0.0),
+            Point::new(1.0, 0.0),
+            Point::new(1.0, 0.0),
+        );
+        assert!(
+            rim.psi(m, n).0.abs() < 1e-5,
+            "mode ({m},{n}) is {} at the rim and a clamped head cannot move there",
+            rim.psi(m, n).0
+        );
+        let centre = Contacts::new(
+            shape,
+            Point::new(0.0, 0.0),
+            Point::new(0.0, 0.0),
+            Point::new(0.0, 0.0),
+        );
+        let at_centre = centre.psi(m, n).0.abs();
+        if m == 0 {
+            assert!(
+                at_centre > 0.5,
+                "the circularly symmetric mode ({m},{n}) should be an antinode at the centre and is {at_centre}"
+            );
+        } else {
+            assert!(
+                at_centre < 1e-5,
+                "mode ({m},{n}) has {m} nodal diameters and cannot move the centre, but reads {at_centre}"
+            );
+        }
+    }
+    // And two more of the published zeros, from the same hand-over.
+    assert!((bessel_zero(0, 3) - 8.653_727_913).abs() < 1e-6);
+    assert!((bessel_zero(1, 2) - 7.015_586_670).abs() < 1e-6);
+}
+
+#[test]
+fn the_tine_is_a_cantilever_and_its_series_is_leissa_table_4_39() {
+    // One sign away from the free bar's frequency equation — cos B cosh B = -1
+    // rather than +1 — and a different instrument. Leissa, NASA SP-160,
+    // Table 4.39 gives the clamped-free roots; MODAL.md §2.3 prints the same
+    // five and the ratios they imply.
+    let published = [1.875_104, 4.694_091, 7.854_757, 10.995_541, 14.137_168];
+    for (k, want) in published.iter().enumerate() {
+        let got = tine_eigenvalue(k + 1);
+        assert!(
+            (got - want).abs() < 5e-6,
+            "beta_{} is {got} and Leissa Table 4.39 says {want}",
+            k + 1
+        );
+    }
+    // 1 : 6.267 : 17.55 : 34.39 : 56.84, from CORPUS.md §4.2 and MODAL.md §2.3.
+    let ratios = [1.0f64, 6.267, 17.55, 34.39, 56.84];
+    let shape = Shape {
+        object: Object::Tine,
+        ..Shape::default()
+    };
+    for (k, want) in ratios.iter().enumerate() {
+        let got = shape.ratio(k as u16 + 1, 0);
+        assert!(
+            (got - want).abs() < 0.01,
+            "tine partial {} is {got} and the published series says {want}",
+            k + 1
+        );
+    }
+    // And it is a different object rather than a beam with a knob turned: the
+    // free bar's first overtone is at 2.76 and this one's is at 6.27, which is
+    // two and a half octaves apart.
+    let beam = Shape {
+        object: Object::Beam,
+        ..Shape::default()
+    };
+    assert!(shape.ratio(2, 0) / beam.ratio(2, 0) > 2.2);
+}
+
+#[test]
+fn a_tine_is_clamped_at_one_end_and_free_at_the_other() {
+    // The two boundary conditions are what make it a tine, and neither is
+    // imposed by hand — both fall out of the rearranged mode shape, so if the
+    // rearrangement were wrong they would fail rather than pass quietly.
+    //
+    // Clamped: the shape and its slope are both zero. Free: the shape is at
+    // its largest, which is why a tine is struck and picked up near its tip.
+    for n in [1usize, 2, 3, 6] {
+        let at_zero = tine_shape(n, 0.0);
+        assert!(
+            at_zero.abs() < 1e-9,
+            "mode {n} is {at_zero} at the clamped end and must be zero"
+        );
+        let h = 1e-6;
+        let slope = (tine_shape(n, h) - tine_shape(n, 0.0)) / h;
+        assert!(
+            slope.abs() < 1e-3,
+            "mode {n} has slope {slope} at the clamped end and a clamp holds the angle too"
+        );
+        let tip = tine_shape(n, 1.0).abs();
+        assert!(tip > 1.0, "mode {n} is only {tip} at the free tip");
+    }
+    // Mass-normalised like every other family here, checked by integrating.
+    for n in [1usize, 2, 4] {
+        let steps = 20_001;
+        let mut acc = 0.0f64;
+        for i in 0..steps {
+            let x = i as f64 / (steps - 1) as f64;
+            let w = if i == 0 || i == steps - 1 { 0.5 } else { 1.0 };
+            acc += w * tine_shape(n, x).powi(2);
+        }
+        let mean = acc / (steps - 1) as f64;
+        assert!(
+            (mean - 1.0).abs() < 1e-4,
+            "tine mode {n} integrates to {mean}"
+        );
+    }
+}
+
+/// Write a preset's values into a real bridge, parameter by parameter and by
+/// id, then read them back the way the audio thread does.
+///
+/// This is deliberately the **whole path the page uses** — id to parameter,
+/// parameter to atomic, atomic to `Settings` — rather than a function compared
+/// with its own inverse. A preset that cannot survive it is a preset that will
+/// not survive a user loading it.
+fn round_trip(values: &serde_json::Map<String, serde_json::Value>) -> Settings {
+    let (bridge, ix) = build_bridge("noob-resonator-preset-test", SR);
+    let audio = bridge.take_audio().expect("audio handle");
+    for (id, v) in values {
+        let i = bridge
+            .index_of(id)
+            .unwrap_or_else(|| panic!("a preset names `{id}`, which is not a parameter"));
+        bridge.set_param(i, v.as_f64().expect("a plain number") as f32);
+    }
+    read_settings(&audio, &ix)
+}
+
+#[test]
+fn every_setting_survives_a_preset_round_trip() {
+    // A settings snapshot with **every field away from its default**, so that a
+    // field missing from `settings_values` reads back as its default and fails
+    // here. A preset system that silently drops one control is worse than
+    // none: it looks like it worked.
+    let s = Settings {
+        object: 8,
+        tune_hz: 313.0,
+        transpose: -7.0,
+        fine_cents: 21.0,
+        modes: 333,
+        order: 2,
+        aspect: 2.75,
+        bar_tuning: 1,
+        bar_third: 1,
+        radius_mm: 47.0,
+        opening: 0.37,
+        decay_s: 7.5,
+        material: 0.42,
+        damp_corner_hz: 3300.0,
+        damp_hi: -1.7,
+        tail: false,
+        bright_db_oct: 2.5,
+        inharm: -0.44,
+        hit: Point::new(0.11, 0.62),
+        pos_l: Point::new(0.27, 0.71),
+        pos_r: Point::new(0.83, 0.19),
+        spread: 0.66,
+        width: 0.23,
+        filter_on: true,
+        filter_hz: 2200.0,
+        filter_oct: 1.75,
+        filter_post: true,
+        lfo_on: true,
+        lfo_shape: 5,
+        lfo_rate_hz: 3.5,
+        lfo_depth_st: 4.5,
+        lfo_phase_deg: 90.0,
+        bleed: 0.29,
+        mix: 0.61,
+        gain_db: -8.5,
+        limiter: false,
+        limit_ceil_db: -9.0,
+        // Never in a preset; see `preset.rs`.
+        bypass: false,
+    };
+    let d = Settings::default();
+    let back = round_trip(&preset::settings_values(&s));
+
+    // Every field, named, so a failure says which one was dropped.
+    let close = |a: f32, b: f32| (a - b).abs() <= 1e-3 * a.abs().max(1.0);
+    assert_eq!(back.object, s.object, "type");
+    assert!(close(back.tune_hz, s.tune_hz), "tune");
+    assert!(close(back.transpose, s.transpose), "transpose");
+    assert!(close(back.fine_cents, s.fine_cents), "fine");
+    assert!(
+        (back.modes as i32 - s.modes as i32).abs() <= 2,
+        "mode_budget: {} against {}",
+        back.modes,
+        s.modes
+    );
+    assert_eq!(back.order, s.order, "select");
+    assert!(close(back.aspect, s.aspect), "ratio");
+    assert_eq!(back.bar_tuning, s.bar_tuning, "bar_tuning");
+    assert_eq!(back.bar_third, s.bar_third, "bar_third");
+    assert!(close(back.radius_mm, s.radius_mm), "radius");
+    assert!(close(back.opening, s.opening), "opening");
+    assert!(close(back.decay_s, s.decay_s), "decay");
+    assert!(close(back.material, s.material), "material");
+    assert!(close(back.damp_corner_hz, s.damp_corner_hz), "damp_corner");
+    assert!(close(back.damp_hi, s.damp_hi), "damp_hi");
+    assert_eq!(back.tail, s.tail, "tail");
+    assert!(close(back.bright_db_oct, s.bright_db_oct), "bright");
+    assert!(close(back.inharm, s.inharm), "inharm");
+    assert!(
+        close(back.hit.x, s.hit.x) && close(back.hit.y, s.hit.y),
+        "hit"
+    );
+    assert!(
+        close(back.pos_l.x, s.pos_l.x) && close(back.pos_l.y, s.pos_l.y),
+        "pos_l"
+    );
+    assert!(
+        close(back.pos_r.x, s.pos_r.x) && close(back.pos_r.y, s.pos_r.y),
+        "pos_r"
+    );
+    assert!(close(back.spread, s.spread), "spread");
+    assert!(close(back.width, s.width), "width");
+    assert_eq!(back.filter_on, s.filter_on, "filter_on");
+    assert!(close(back.filter_hz, s.filter_hz), "filter_freq");
+    assert!(close(back.filter_oct, s.filter_oct), "filter_width");
+    assert_eq!(back.filter_post, s.filter_post, "filter_place");
+    assert_eq!(back.lfo_on, s.lfo_on, "lfo_on");
+    assert_eq!(back.lfo_shape, s.lfo_shape, "lfo_shape");
+    assert!(close(back.lfo_rate_hz, s.lfo_rate_hz), "lfo_rate");
+    assert!(close(back.lfo_depth_st, s.lfo_depth_st), "lfo_depth");
+    assert!(close(back.lfo_phase_deg, s.lfo_phase_deg), "lfo_phase");
+    assert!(close(back.bleed, s.bleed), "bleed");
+    assert!(close(back.mix, s.mix), "mix");
+    assert!(close(back.gain_db, s.gain_db), "gain");
+    assert_eq!(back.limiter, s.limiter, "limiter");
+    assert!(close(back.limit_ceil_db, s.limit_ceil_db), "limit_ceil");
+
+    // And every one of those really was away from its default, or the block
+    // above would pass on a field that is never written at all.
+    assert_ne!(s.object, d.object);
+    assert_ne!(s.tail, d.tail);
+    assert_ne!(s.limiter, d.limiter);
+    assert_ne!(s.filter_on, d.filter_on);
+    assert_ne!(s.lfo_on, d.lfo_on);
+    assert_ne!(s.filter_post, d.filter_post);
+}
+
+#[test]
+fn every_factory_preset_is_one_a_page_could_load() {
+    let specs = param_specs(false);
+    let factory = preset::factory();
+    assert!(
+        factory.len() >= 15,
+        "only {} factory presets",
+        factory.len()
+    );
+
+    let mut names: Vec<&str> = factory.iter().map(|p| p.name).collect();
+    names.sort_unstable();
+    let before = names.len();
+    names.dedup();
+    assert_eq!(before, names.len(), "two factory presets share a name");
+
+    for p in &factory {
+        let json = p.to_json();
+        assert_eq!(json["v"], preset::PRESET_VERSION);
+        assert!(!p.description.is_empty(), "{} has no description", p.name);
+        // `modes` is mandatory even when empty: an absent key would have to
+        // mean something, and every meaning it could have is a trap.
+        assert!(json["modes"].is_array(), "{} has no modes list", p.name);
+
+        let values = json["values"].as_object().expect("values is an object");
+        assert!(
+            !values.contains_key("bypass"),
+            "{} carries bypass, which is a transport control and not a sound",
+            p.name
+        );
+        for (id, v) in values {
+            let spec = specs
+                .iter()
+                .find(|s| s.id == *id)
+                .unwrap_or_else(|| panic!("{} names `{id}`, which is not a parameter", p.name));
+            let x = v.as_f64().unwrap() as f32;
+            let (lo, hi) = (spec.min.min(spec.max), spec.min.max(spec.max));
+            assert!(
+                x >= lo - 1e-4 && x <= hi + 1e-4,
+                "{}: `{id}` is {x}, outside {lo}..{hi}",
+                p.name
+            );
+        }
+        // And the whole thing survives the path a page would take.
+        let back = round_trip(values);
+        assert_eq!(
+            back.object, p.settings.object,
+            "{} loads as a different object",
+            p.name
+        );
+        // The group has to name the object, or the browser files it wrongly.
+        assert_eq!(
+            p.group, OBJECT_NAMES[p.settings.object],
+            "{} is grouped under the wrong object",
+            p.name
+        );
+    }
+}
+
+#[test]
+fn the_a_b_pair_differs_by_exactly_one_control() {
+    // The pair exists so a user meets the argument by accident rather than by
+    // reading about it, and that only works if the two are otherwise
+    // identical. If a later edit changes one of them, this says so.
+    let factory = preset::factory();
+    let a = factory
+        .iter()
+        .find(|p| p.name.starts_with("A \u{b7}"))
+        .expect("the A preset");
+    let b = factory
+        .iter()
+        .find(|p| p.name.starts_with("B \u{b7}"))
+        .expect("the B preset");
+    let (va, vb) = (
+        preset::settings_values(&a.settings),
+        preset::settings_values(&b.settings),
+    );
+    let differ: Vec<&String> = va
+        .iter()
+        .filter(|(k, v)| vb.get(*k) != Some(*v))
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(
+        differ,
+        vec!["select"],
+        "the pair should differ in `select` alone and differs in {differ:?}"
+    );
+    assert!(a.modes.is_empty() && b.modes.is_empty());
+}
+
+#[test]
+fn the_hand_bell_puts_its_partials_on_a_bells_own_series() {
+    // The preset that exists to prove the mode table earns its place. A bell's
+    // partials are the standard minor-third set — hum 0.5, prime 1.0, tierce
+    // 1.2, quint 1.5, nominal 2.0 — and a string's are 1, 2, 3, 4, 5, so each
+    // override is the interval between them. Checked as ratios rather than as
+    // the cent figures, so the arithmetic is verified and not merely copied.
+    let bell = [0.5f32, 1.0, 1.2, 1.5, 2.0];
+    let p = preset::factory()
+        .into_iter()
+        .find(|p| p.name == "Hand Bell")
+        .expect("the Hand Bell preset");
+    assert_eq!(p.modes.len(), bell.len());
+    for (k, want) in bell.iter().enumerate() {
+        let e = p.modes[k];
+        let natural = (k + 1) as f32;
+        let moved = natural * 2f32.powf(e.cents / 1200.0);
+        assert!(
+            (moved - want).abs() < 1e-3,
+            "partial {} lands at {moved} and a bell's is at {want}",
+            k + 1
+        );
+        assert_eq!(e.i, (k + 1) as u16, "keyed by the partial's own index");
+        assert!(
+            e.cents.abs() <= 2400.0,
+            "the override is outside what the table accepts"
+        );
+    }
+}
+
+#[test]
+fn a_partials_two_indices_are_unique_across_every_object() {
+    // An override is keyed by `(i, j)`, so the moment two partials share a
+    // pair the key silently stops being a key and one edit lands on several
+    // resonances. Suggested by the panel agent, who asserts the same thing on
+    // their side; it costs nothing and it guards the whole editing model.
+    for object in Object::ALL {
+        if object.engine() == object::Engine::Guide {
+            continue;
+        }
+        for aspect in [1.0f32, 1.41, 0.6] {
+            let shape = Shape {
+                object,
+                aspect,
+                ..Shape::default()
+            };
+            let mut seen: Vec<(u16, u16)> = Walk::new(shape, 120.0).map(|p| (p.i, p.j)).collect();
+            let total = seen.len();
+            assert!(total > 3, "{object:?} yielded only {total} partials");
+            seen.sort_unstable();
+            seen.dedup();
+            assert_eq!(
+                seen.len(),
+                total,
+                "{object:?} at aspect {aspect} has two partials sharing an (i, j)"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_field_that_does_not_apply_publishes_nan_and_never_zero() {
+    // A real zero and an uncomputed zero are indistinguishable to a panel, and
+    // a plausible zero is worse than a blank because it reads as a measurement
+    // nothing made. The panel agent hit exactly this in their own stand-in,
+    // where a zero-filled frame published "0.0 dB GR" for a limiter that had
+    // never run.
+    let settle = |set: &Settings| -> [f32; INFO_LEN] {
+        let mut e = Resonator::new(SR);
+        e.configure(set);
+        let mut l = vec![0.0f32; bank::BLOCK];
+        let mut r = vec![0.0f32; bank::BLOCK];
+        let mut guard = 0;
+        while e.info_frame()[10] < 1.0 && guard < 40_000 {
+            e.process(&mut l, &mut r);
+            guard += 1;
+        }
+        for _ in 0..8 {
+            e.process(&mut l, &mut r);
+        }
+        e.info_frame()
+    };
+
+    // A mode bank has no bore and no far end.
+    let bank_frame = settle(&Settings {
+        object: 2,
+        tune_hz: 220.0,
+        modes: 512,
+        limiter: false,
+        ..Settings::default()
+    });
+    for (k, what) in [(6usize, "column_m"), (7, "loop_ms"), (8, "open_hz")] {
+        assert!(
+            bank_frame[k].is_nan(),
+            "a mode bank published {} for {what}",
+            bank_frame[k]
+        );
+    }
+    assert!(
+        bank_frame[4].is_nan(),
+        "the limiter is off and its reduction still read {}",
+        bank_frame[4]
+    );
+    // A string at 220 Hz has 90 partials and the bank holds all of them, so
+    // there is no wall — and no wall is NaN, not a wall at zero hertz.
+    assert!(
+        bank_frame[12].is_nan(),
+        "the bank holds every partial and still published a ceiling at {}",
+        bank_frame[12]
+    );
+    // The ones that do apply are real numbers.
+    for (k, what) in [
+        (0usize, "modes_used"),
+        (1, "modes_available"),
+        (2, "crossover_hz"),
+        (10, "build"),
+        (11, "f0_hz"),
+    ] {
+        assert!(
+            bank_frame[k].is_finite(),
+            "{what} should be a number on a mode bank"
+        );
+    }
+
+    // An air column has no mode list to truncate and no inharmonicity.
+    let guide_frame = settle(&Settings {
+        object: 6,
+        tune_hz: 220.0,
+        ..Settings::default()
+    });
+    for (k, what) in [
+        (2usize, "crossover_hz"),
+        (3, "tail_db"),
+        (5, "inharm_b"),
+        (12, "ceiling_hz"),
+    ] {
+        assert!(
+            guide_frame[k].is_nan(),
+            "an air column published {} for {what}",
+            guide_frame[k]
+        );
+    }
+    for (k, what) in [(6usize, "column_m"), (7, "loop_ms"), (11, "f0_hz")] {
+        assert!(
+            guide_frame[k].is_finite(),
+            "{what} should be a number on an air column"
+        );
+    }
+    assert_eq!(guide_frame[9], 1.0, "engine says waveguide");
+
+    // And where a bank really is truncated, the wall is a frequency.
+    let truncated = settle(&Settings {
+        object: 3,
+        tune_hz: 110.0,
+        modes: 64,
+        order: 1,
+        ..Settings::default()
+    });
+    assert!(
+        truncated[12].is_finite() && truncated[12] > 100.0,
+        "a truncated bank should publish where it stops and published {}",
+        truncated[12]
+    );
+}
+
+#[test]
+fn the_scaled_modified_bessel_matches_abramowitz_and_stegun() {
+    // `e^-x I_m(x)`, Abramowitz and Stegun Table 9.8. Scaled because the
+    // clamped plate needs it at arguments in the tens, where `I_m` itself is
+    // astronomically large and the quotient it appears in is perfectly
+    // ordinary.
+    for (x, want) in [
+        (1.0f64, 0.465_759_6),
+        (2.0, 0.308_508_3),
+        (5.0, 0.183_540_8),
+    ] {
+        let got = bessel_i_scaled(0, x);
+        assert!(
+            (got - want).abs() < 1e-6,
+            "e^-x I0({x}) is {got} and A&S Table 9.8 gives {want}"
+        );
+    }
+    // I_1(2) = 1.590637 by its own series, times e^-2. Checked against the
+    // series rather than against a table, because the figure I first wrote
+    // here from memory was wrong in the fifth place and the series is not.
+    // I_1(2) = sum over k of 1/(k!(k+1)!), summed as running terms because
+    // the factorials themselves overflow long before the series does.
+    let mut term = 1.0f64;
+    let mut series = term;
+    for k in 1..40u32 {
+        term /= (k as f64) * (k as f64 + 1.0);
+        series += term;
+    }
+    let want = series * (-2.0f64).exp();
+    let got = bessel_i_scaled(1, 2.0);
+    assert!(
+        (got - want).abs() < 1e-9,
+        "e^-x I1(2) is {got} and its own series gives {want}"
+    );
+}
+
+#[test]
+fn the_clamped_disc_is_leissas_circular_plate() {
+    // A circular plate clamped at its rim. The frequency parameter is the
+    // published one, `lambda^2 = omega a^2 sqrt(rho h / D)`, and its first
+    // four values are the standard tabulated set for this plate.
+    let published = [10.2158f64, 21.26, 34.88, 39.771];
+    let modes = [(0usize, 1usize), (1, 1), (2, 1), (0, 2)];
+    for ((m, n), want) in modes.iter().zip(published.iter()) {
+        let l = disc_root(*m, *n);
+        let l2 = l * l;
+        assert!(
+            (l2 - want).abs() < 0.01,
+            "({m},{n}) gives lambda^2 = {l2:.4} and the published value is {want}"
+        );
+    }
+    // And the ratios that follow: 1, 2.08, 3.41, 3.89.
+    let shape = Shape {
+        object: Object::PlateRound,
+        ..Shape::default()
+    };
+    for ((m, n), want) in modes.iter().zip([1.0f64, 2.081, 3.414, 3.893].iter()) {
+        let got = shape.ratio(*m as u16, *n as u16);
+        assert!(
+            (got - want).abs() < 0.002,
+            "({m},{n}) is at {got} and the published ratio is {want}"
+        );
+    }
+}
+
+#[test]
+fn a_clamped_plate_spreads_where_a_membrane_crowds() {
+    // The one square that separates the two discs. A membrane's frequency
+    // goes as its eigenvalue and a plate's as the **square** of it, so their
+    // partials go opposite ways as they rise: this is why a drum has a pitch
+    // and a cymbal has a wash, on the same shape of object.
+    let membrane = Shape {
+        object: Object::MembraneRound,
+        ..Shape::default()
+    };
+    let plate = Shape {
+        object: Object::PlateRound,
+        ..Shape::default()
+    };
+    // Both start at 1 by construction; by the fourth partial they are far
+    // apart and the plate is above.
+    let mut m_ratios: Vec<f64> = Walk::new(membrane, 40.0).map(|p| p.ratio as f64).collect();
+    let mut p_ratios: Vec<f64> = Walk::new(plate, 40.0).map(|p| p.ratio as f64).collect();
+    m_ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    p_ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(m_ratios.len() > 8 && p_ratios.len() > 8);
+    assert!(
+        p_ratios[3] > m_ratios[3] * 1.4,
+        "the plate's fourth partial is {} and the membrane's {}",
+        p_ratios[3],
+        m_ratios[3]
+    );
+    // And the counting law differs: constant density against rising.
+    assert_eq!(Object::PlateRound.density_exponent(), 1.0);
+    assert_eq!(Object::MembraneRound.density_exponent(), 2.0);
+}
+
+#[test]
+fn a_clamped_plate_is_held_flat_at_its_rim() {
+    // "Clamped" is two conditions rather than a membrane's one: the plate
+    // cannot move at the rim **and** cannot tilt there. The first falls out of
+    // how the shape is written; the second is what the eigenvalue was solved
+    // for, so it is the one that would expose a wrong root.
+    for (m, n) in [(0usize, 1usize), (0, 2), (1, 1), (2, 1), (3, 2)] {
+        let at_rim = disc_shape(m, n, 1.0);
+        assert!(
+            at_rim.abs() < 1e-6,
+            "mode ({m},{n}) is {at_rim} at the rim and a clamp holds it at zero"
+        );
+        let h = 1e-5;
+        let slope = (disc_shape(m, n, 1.0) - disc_shape(m, n, 1.0 - h)) / h;
+        assert!(
+            slope.abs() < 2e-3,
+            "mode ({m},{n}) has slope {slope} at the rim and a clamp holds the angle too"
+        );
+    }
+    // Mass-normalised like every other family, checked by integrating rather
+    // than by trusting the constant that was stored.
+    for (m, n) in [(0usize, 1usize), (1, 1), (2, 2)] {
+        let steps = 20_001;
+        let mut acc = 0.0f64;
+        for i in 0..steps {
+            let r = i as f64 / (steps - 1) as f64;
+            let w = if i == 0 || i == steps - 1 { 0.5 } else { 1.0 };
+            acc += w * disc_shape(m, n, r).powi(2) * r;
+        }
+        let mean = acc / (steps - 1) as f64 * if m == 0 { 2.0 } else { 1.0 };
+        assert!(
+            (mean - 1.0).abs() < 1e-3,
+            "clamped plate mode ({m},{n}) integrates to {mean}"
         );
     }
 }

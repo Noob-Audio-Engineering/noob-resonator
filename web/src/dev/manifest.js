@@ -27,6 +27,8 @@ import { getClient } from '@noob-audio-engineering/noob-vst-webgui-framework/vue
 import { OBJECTS, objectAt } from '../objects.js';
 import {
   PUBLISHED,
+  bankResponse,
+  ceilingHz,
   columnFacts,
   computePartials,
   guideResponse,
@@ -38,8 +40,8 @@ import {
 /** From `dsp::engine`: `MAX_EDITS`, `MODE_FIELDS`, `INFO_LEN`, `RESPONSE_POINTS`. */
 export const MAX_MODES = 4096;
 export const MAX_PARTIALS = 64;
-export const MODE_FIELDS = 6;
-export const INFO_LEN = 12;
+export const MODE_FIELDS = 8;
+export const INFO_LEN = 13;
 export const RESPONSE_POINTS = 512;
 export const METER_LEN = 4;
 
@@ -60,7 +62,12 @@ export const PARAMS = stepped([
   { id: 'tune', name: 'Tune', min: 20, max: 4000, default: 220, unit: 'Hz', taper: 'log', group: 'body' },
   { id: 'transpose', name: 'Transpose', min: -48, max: 48, default: 0, unit: 'st', group: 'body' },
   { id: 'fine', name: 'Fine', min: -50, max: 50, default: 0, unit: 'ct', group: 'body' },
-  { id: 'modes', name: 'Modes', min: 4, max: MAX_MODES, default: 1024, taper: 'log', group: 'engine' },
+  // `mode_budget`, not `modes`: the stream is called `modes`, and a name that
+  // means two things on one wire is a trap for whoever comes next. Not
+  // "quality" either — that is their word for a control that truncates by
+  // frequency and then needs a Bleed knob to restore what it threw away, and
+  // this one spends a budget by contribution. The face still says Modes.
+  { id: 'mode_budget', name: 'Modes', min: 4, max: MAX_MODES, default: 1024, taper: 'log', group: 'engine' },
   { id: 'select', name: 'Selection', labels: SELECT_LABELS, default: 0, group: 'engine' },
   { id: 'ratio', name: 'Ratio', min: 0.2, max: 5, default: 1, taper: 'log', group: 'body' },
   { id: 'bar_tuning', name: 'Bar Tuning', labels: BAR_TUNINGS, default: 0, group: 'body' },
@@ -111,68 +118,67 @@ export const PARAMS = stepped([
 ]);
 
 /**
- * Which controls each object has — the greying-out truth, published rather
- * than derived. The page reads this and reimplements none of it.
+ * Which controls each object has — **a copy of `dsp::object_meta()`**, not a
+ * proposal to it. The page reads this and reimplements none of it.
  *
- * **Still this file's proposal, and marked as one.** `dsp::object_meta()` is
- * the engine's own version and wins the moment the plug-in is connected.
- * Three rows here disagree with Ableton's Push table on purpose: Material,
- * Bright, Hit and the two pickups stay live on the air columns, because the
- * physics does not go away — a pipe loses its highs to the walls and the open
- * end exactly as a bar loses them to internal friction, and injecting a wave
+ * Three things about the shape, all of which the page depends on:
+ *
+ * * **`id` is the object's index, not a string.** A saved project loads by
+ *   index, so that is what identifies an object on the wire.
+ * * **`engine` is `"bank"` or `"waveguide"`** — the engine's own words.
+ * * **`forces`** says what choosing this object pins. A Tube is a Pipe with
+ *   its far end fully open, so the engine forces `opening` to 1 rather than
+ *   the panel writing it: they are one loop at two settings of one
+ *   termination, and both keep their own index because a user who picks Tube
+ *   has asked for a tube, not for a pipe to open by hand.
+ *
+ * The air columns keep Bright, Hit and both pickups, which is the physics —
+ * a pipe loses its highs to the walls and the open end, and injecting a wave
  * a third of the way along a delay loop cancels every third harmonic. What
- * genuinely does not apply to a waveguide is the mode budget, because one
- * loop gives every resonance under Nyquist at one cost.
- *
- * `bleed` is listed everywhere, which is a deliberate non-answer: their table
- * lists it unconditionally and their manual says it is deactivated for the
- * air columns, and the table proves nothing by its silence.
+ * they do not get is the mode budget, the selection, or the damping law's
+ * three extra controls.
  */
 const COMMON = [
-  'type', 'tune', 'transpose', 'fine', 'select', 'decay', 'material', 'damp_corner', 'damp_hi', 'tail',
-  'bright', 'spread', 'width', 'filter_on', 'filter_freq', 'filter_width', 'filter_place',
+  'type', 'tune', 'transpose', 'fine', 'decay', 'spread', 'width',
+  'filter_on', 'filter_freq', 'filter_width', 'filter_place',
   'lfo_on', 'lfo_shape', 'lfo_rate', 'lfo_depth', 'lfo_phase',
   'bleed', 'mix', 'gain', 'limiter', 'limit_ceil', 'bypass',
 ];
-const CONTACT_1D = ['hit', 'pos_l', 'pos_r'];
-const CONTACT_2D = [...CONTACT_1D, 'hit_y', 'pos_l_y', 'pos_r_y'];
+const BANK_ONLY = [
+  'mode_budget', 'select', 'material', 'damp_corner', 'damp_hi', 'tail', 'bright',
+  'inharm', 'hit', 'pos_l', 'pos_r',
+];
 
-const USES = {
-  beam: [...COMMON, ...CONTACT_1D, 'modes', 'inharm'],
-  marimba: [...COMMON, ...CONTACT_1D, 'modes', 'inharm', 'bar_tuning', 'bar_third'],
-  string: [...COMMON, ...CONTACT_1D, 'modes', 'inharm'],
-  membrane: [...COMMON, ...CONTACT_2D, 'modes', 'inharm', 'ratio'],
-  plate: [...COMMON, ...CONTACT_2D, 'modes', 'inharm', 'ratio'],
-  pipe: [...COMMON, ...CONTACT_1D, 'radius', 'opening'],
-  tube: [...COMMON, ...CONTACT_1D, 'radius'],
-  membrane_round: [...COMMON, ...CONTACT_2D, 'modes', 'inharm'],
+const TWO_D = ['membrane', 'plate', 'membrane_round'];
+const HAS_ASPECT = ['membrane', 'plate'];
+
+function usesFor(o) {
+  const uses = [...COMMON];
+  if (o.engine === 'waveguide') {
+    uses.push('radius', 'hit', 'pos_l', 'pos_r', 'bright');
+    if (o.id === 'pipe') uses.push('opening');
+  } else {
+    uses.push(...BANK_ONLY);
+    if (TWO_D.includes(o.id)) uses.push('hit_y', 'pos_l_y', 'pos_r_y');
+    if (HAS_ASPECT.includes(o.id)) uses.push('ratio');
+    if (o.id === 'marimba') uses.push('bar_tuning', 'bar_third');
+  }
+  return [...new Set(uses)].sort();
+}
+
+const NOTES = {
+  tube: 'a Pipe with its far end fully open: the same loop, one reflection at its extreme',
+  pipe: 'an air column with a variable far end, from fully closed to fully open',
 };
 
-/**
- * How each object's three contact points are addressed.
- *
- * `line` is one coordinate along a bar, a string or an air column. `xy` is a
- * rectangle. **`polar` is a disc**, and it is not a cosmetic difference: a
- * round head mapped as a square wastes the corners and clamps them to the
- * rim, where every mode of a clamped membrane is exactly zero — so a strike
- * in the corner of the control excited nothing at all. On a disc, X is the
- * distance from the centre and Y is the angle round it, and the angle decides
- * which orientation of a degenerate pair the strike aligns with, which is
- * audible.
- */
-const COORDS = {
-  beam: 'line', marimba: 'line', string: 'line',
-  membrane: 'xy', plate: 'xy',
-  pipe: 'line', tube: 'line',
-  membrane_round: 'polar',
-};
-
-export const OBJECT_TABLE = OBJECTS.map((o) => ({
-  id: o.id,
+export const OBJECT_TABLE = OBJECTS.map((o, i) => ({
+  id: i,
   label: o.label,
-  engine: o.engine,
-  coords: COORDS[o.id],
-  uses: USES[o.id],
+  engine: o.engine === 'waveguide' ? 'waveguide' : 'bank',
+  forces: o.id === 'tube' ? { opening: 1.0 } : null,
+  note: NOTES[o.id] || '',
+  coords: o.id === 'membrane_round' ? 'polar' : TWO_D.includes(o.id) ? 'xy' : 'line',
+  uses: usesFor(o),
 }));
 
 /**
@@ -187,10 +193,10 @@ export const OBJECT_TABLE = OBJECTS.map((o) => ({
  * `ceiling_hz`, would let it draw the wall where a mode bank runs out. All
  * three have been asked for. None is reconstructed here.
  */
-export const MODES_LAYOUT = ['i', 'j', 'hz', 'db_l', 'db_r', 't60_s'];
+export const MODES_LAYOUT = ['i', 'j', 'hz', 'db_l', 'db_r', 't60_s', 'db_bare', 'base_hz'];
 export const INFO_LAYOUT = [
   'modes_used', 'modes_available', 'crossover_hz', 'tail_db', 'limit_gr_db', 'inharm_b',
-  'column_m', 'loop_ms', 'open_hz', 'engine', 'build', 'f0_hz',
+  'column_m', 'loop_ms', 'open_hz', 'engine', 'build', 'f0_hz', 'ceiling_hz',
 ];
 
 export const STREAMS = [
@@ -276,12 +282,16 @@ const edits = () => {
 
 /** Everything the generators need, read once per frame from the client. */
 function readState() {
-  const object = objectAt(step('type', 2));
+  const ix = step('type', 2);
+  const object = objectAt(ix);
+  // What the engine pins for this object. A Tube's far end is open by
+  // definition, and the engine forces it rather than the panel writing it.
+  const forced = OBJECT_TABLE[ix]?.forces || {};
   return {
     object: object.id,
     engine: object.engine,
     f0: plain('tune', 220) * 2 ** (plain('transpose', 0) / 12 + plain('fine', 0) / 1200),
-    modes: Math.round(plain('modes', 1024)),
+    modes: Math.round(plain('mode_budget', 1024)),
     select: SELECT_LABELS[step('select', 0)] || 'Loudest',
     inharm: plain('inharm', 0) / 100,
     bright: plain('bright', -3),
@@ -295,7 +305,7 @@ function readState() {
     posRY: plain('pos_r_y', 70) / 100,
     spread: plain('spread', 0) / 100,
     ratio: plain('ratio', 1),
-    opening: plain('opening', 0) / 100,
+    opening: forced.opening != null ? forced.opening : plain('opening', 0) / 100,
     radius: plain('radius', 20),
     barSecond: step('bar_tuning', 0) === 1 ? 3 : 4,
     barThird: step('bar_third', 0) === 1 ? 10 : 9.2,
@@ -323,19 +333,29 @@ function build() {
     s.engine === 'waveguide'
       ? available
       : selectPartials(available, s.select, Math.max(1, Math.min(available.length, s.modes)));
-  const drawn = loudest(audible, MAX_PARTIALS);
+  // Every mode the user has edited stays in the published set, as the engine
+  // does it, so a partial you turned down does not vanish from the display
+  // that shows you turning it down.
+  const editedKeys = new Set((s.edits || []).map((e) => `${e.i}:${e.j || 0}`));
+  const drawn = loudest(audible, MAX_PARTIALS, editedKeys);
 
   const modes = new Float32Array(MAX_PARTIALS * MODE_FIELDS);
   drawn.forEach((p, k) => {
     const at = k * MODE_FIELDS;
-    modes[at] = p.i;
-    // The mode's second index. The stand-in does not track one, and the panel
-    // does not read it; the engine fills it for the two-dimensional objects.
-    modes[at + 1] = 0;
+    modes[at] = p.mi;
+    // The mode's second index: nodal circles on a disc, the second rectangle
+    // index on a surface, and 0 on anything with only one.
+    modes[at + 1] = p.mj;
     modes[at + 2] = p.hz;
     modes[at + 3] = p.dbL;
     modes[at + 4] = p.dbR;
     modes[at + 5] = p.ring;
+    // The level with unit mode shapes at both contacts — the tilt alone — so
+    // the gap between this and `db_l` is exactly the energy the strike or the
+    // pickup removed.
+    modes[at + 6] = p.bareDb;
+    // Where this partial sat before Inharm moved it.
+    modes[at + 7] = p.baseHz;
   });
 
   const facts = s.engine === 'waveguide' ? columnFacts(s) : { metres: 0, loopS: 0 };
@@ -358,13 +378,74 @@ function build() {
   // The stand-in has no incremental mode search, so its table is always settled.
   put('build', 1);
   put('f0_hz', s.f0);
+  // Zero when the bank has every partial the object has: no wall to draw,
+  // rather than no data.
+  put('ceiling_hz', ceilingHz(s, available, audible));
 
-  const response = s.engine === 'waveguide' ? Float32Array.from(guideResponse(s, RESPONSE_POINTS)) : null;
+  // The engine publishes a response for both engines — `engine.rs` takes it
+  // from `guides[0]` or `banks[0]` — so the stand-in does too, or the panel
+  // would show something in one mode it cannot show in the other.
+  const response = Float32Array.from(
+    s.engine === 'waveguide' ? guideResponse(s, RESPONSE_POINTS) : bankResponse(s, audible, RESPONSE_POINTS),
+  );
 
   cacheKey = key;
   cached = { modes, info, response };
   return cached;
 }
+
+/**
+ * Design-mode presets — **stand-ins, exactly like the stream generators.**
+ *
+ * Factory presets are the engine's: they come out of `Settings` structs where
+ * they cannot fall outside a range or contradict an object, and they arrive
+ * in `meta.presets` in this same shape. These exist so the preset view has
+ * something to render before that, and the engine's own replace them wholesale
+ * the moment a plug-in answers.
+ *
+ * **The last two are a deliberate pair** — the same string at the same budget
+ * with Selection on Loudest and on Lowest — because that comparison is the
+ * argument this device is built around, and the browser finds pairs by
+ * diffing values rather than by name, so it marks them without being told.
+ */
+const PRESET_STANDINS = [
+  {
+    v: 1, name: 'Struck Slate', group: 'Plate',
+    description: 'a sheet of metal hit with something soft: dense, spread and slow to settle',
+    values: { type: 4, tune: 110, decay: 6, material: -0.2, bright: -4, ratio: 2.1, mode_budget: 1024, select: 0, hit: 32, pos_l: 24, pos_r: 76 },
+    modes: [],
+  },
+  {
+    v: 1, name: 'Timpani Head', group: 'Membrane Round',
+    description: 'struck away from the centre, where the diameters live',
+    values: { type: 7, tune: 82, decay: 3.4, material: -0.4, bright: -3, mode_budget: 512, select: 0, hit: 62, hit_y: 25, pos_l: 40, pos_r: 70 },
+    modes: [],
+  },
+  {
+    v: 1, name: 'Tuned Bar', group: 'Marimba',
+    description: 'the arch cut to four to one, struck off its node',
+    values: { type: 1, tune: 220, decay: 1.6, material: -0.6, bright: -5, bar_tuning: 0, bar_third: 0, mode_budget: 256, select: 0, hit: 50 },
+    modes: [{ i: 2, j: 0, cents: -8 }],
+  },
+  {
+    v: 1, name: 'Stopped Pipe', group: 'Pipe',
+    description: 'odd harmonics only, an octave below the length you would guess',
+    values: { type: 5, tune: 146, decay: 2.2, radius: 34, opening: 0, bright: -2, hit: 18, pos_l: 30, pos_r: 70 },
+    modes: [],
+  },
+  {
+    v: 1, name: 'String · Loudest', group: 'String',
+    description: 'twenty-four resonators spent on the partials you can hear',
+    values: { type: 2, tune: 55, decay: 4, material: -0.5, bright: -3, mode_budget: 24, select: 0, hit: 20, pos_l: 30, pos_r: 70 },
+    modes: [],
+  },
+  {
+    v: 1, name: 'String · Lowest', group: 'String',
+    description: 'the same twenty-four spent from the bottom up, which is where the object goes deaf',
+    values: { type: 2, tune: 55, decay: 4, material: -0.5, bright: -3, mode_budget: 24, select: 1, hit: 20, pos_l: 30, pos_r: 70 },
+    modes: [],
+  },
+];
 
 export const offline = {
   name: 'noob-resonator',
@@ -375,6 +456,8 @@ export const offline = {
     standalone: true,
     /** The greying-out truth. `composables/useResonator.js` reads this and derives nothing. */
     objects: OBJECT_TABLE,
+    /** Stand-ins; the engine's own factory presets arrive here and replace them. */
+    presets: PRESET_STANDINS,
   },
   params: PARAMS,
   streams: STREAMS,

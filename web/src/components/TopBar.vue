@@ -9,12 +9,15 @@
  * though: it is on the display's level axis, next to the numbers it is about.
  */
 import { computed } from 'vue';
-import { ui, useDebug, useNoobVstWebguiFramework, useObject } from '../composables/useResonator.js';
+import { ui, useDebug, useNoobVstWebguiFramework, useObject, useRes } from '../composables/useResonator.js';
 import LevelStrip from './LevelStrip.vue';
+import { usePresets } from '../composables/usePresets.js';
 
 const { connected, history, historyState, stats } = useNoobVstWebguiFramework();
 const debug = useDebug();
 const object = useObject();
+const r = useRes();
+const presets = usePresets();
 const state = computed(() => (connected.value ? 'live' : 'design mode'));
 </script>
 
@@ -33,6 +36,37 @@ const state = computed(() => (connected.value ? 'live' : 'design mode'));
         in is the button that says what it does.
       -->
       <span v-if="!ui.browsing" class="bar__object">{{ object.label }}</span>
+      <!--
+        What is loaded and whether it has been touched since. A dot rather
+        than a word, because "edited" beside a name is a status a user reads
+        once and then stops seeing.
+      -->
+      <button
+        v-if="!ui.browsing && !ui.presets"
+        class="key bar__preset"
+        type="button"
+        :title="presets.loaded ? (presets.modified ? 'Edited since it was loaded' : 'Loaded, unchanged') : 'No preset loaded'"
+        @click="ui.presets = true"
+      >
+        <span v-if="presets.modified" class="bar__dirty" />
+        {{ presets.loaded ? presets.loaded.name : 'Presets' }}
+      </button>
+      <!--
+        Bypass, said out loud. Everything else on the panel goes on drawing
+        the object it would be making if it were running, which is right —
+        the display is about the object, not about the output — but a user
+        looking at a full display and hearing nothing deserves to be told
+        why, and told it somewhere that is always on screen.
+      -->
+      <button
+        v-if="r.bypass && r.bypass.on"
+        class="bar__bypass"
+        type="button"
+        title="The device is bypassed. Click to switch it back in."
+        @click="r.bypass.setOn(false)"
+      >
+        bypassed
+      </button>
     </div>
 
     <!--

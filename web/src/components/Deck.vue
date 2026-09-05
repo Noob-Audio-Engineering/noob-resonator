@@ -25,15 +25,15 @@
 import { computed } from 'vue';
 import { Segmented, Toggle } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import ResKnob from './ResKnob.vue';
-import { contactAxes, coordsOf, inactive, timeText, useInfo, useModes, useObject, useObjectTable, useRes } from '../composables/useResonator.js';
+import { contactAxes, coordsOf, hzText, inactive, stiffnessText, timeText, useInfo, useModes, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
 
 const r = useRes();
 const object = useObject();
 const modes = useModes();
 const info = useInfo();
-const table = useObjectTable();
+const meta = useObjectMeta();
 
-const off = (id) => inactive(id, object.value, table.value);
+const off = (id) => inactive(id, object.value, meta.value);
 
 /**
  * Material states what its exponent is costing the top of the series, read
@@ -47,13 +47,30 @@ const materialHint = computed(() => {
   const top = l.length ? l[l.length - 1] : null;
   return top && top.ring != null ? `top rings ${timeText(top.ring)}` : 'damping against frequency';
 });
+/**
+ * Opening, with the frequency the far end actually changes character at.
+ *
+ * A partly-open end is not open at every frequency: below the transition it
+ * still reflects like a closed one and above it radiates like an open one.
+ * `open_hz` is that crossing, and it is the physical fact the control is
+ * setting — far more use than "60 %".
+ */
 const openingHint = computed(() => {
   if (!r.opening) return 'the far end';
   const o = r.opening.plain / 100;
+  if (info.openHz > 0) return `open above ${hzText(info.openHz)}`;
   if (o < 0.02) return 'stopped · odd only';
   if (o > 0.98) return 'open · full series';
   return 'part open · sliding';
 });
+
+/** Inharm, printed as the coefficient the relation is written in rather than as a percentage. */
+const inharmHint = computed(() => stiffnessText(info.inharmB) || 'stretches the series');
+
+/** What the tail is actually doing, so an otherwise opaque switch has a reading. */
+const tailHint = computed(() =>
+  info.tailDb == null ? 'let it ring out' : `tail at ${info.tailDb.toFixed(1)} dB`,
+);
 const barOff = computed(() => off('bar_tuning'));
 
 /**
@@ -65,7 +82,7 @@ const barOff = computed(() => off('bar_tuning'));
  * telling the user to think in squares about a circle, which is precisely the
  * mistake that once let a strike land in a corner that does not exist.
  */
-const axes = computed(() => contactAxes(coordsOf(object.value, table.value)));
+const axes = computed(() => contactAxes(coordsOf(object.value, meta.value)));
 const ax = (base, which) => {
   const a = axes.value[which];
   return a.suffix ? `${base} ${a.suffix}` : base;
@@ -77,9 +94,9 @@ const ax = (base, which) => {
     <section class="deck__group plate">
       <h3 class="cap deck__head">Body<span class="why">what is ringing</span></h3>
       <div class="deck__row">
-        <ResKnob v-if="r.tune" :p="r.tune" label="Tune" :size="56" />
-        <ResKnob v-if="r.transpose" :p="r.transpose" label="Transpose" :size="44" hint="semitones" />
-        <ResKnob v-if="r.fine" :p="r.fine" label="Fine" :size="42" />
+        <ResKnob v-if="r.tune" :p="r.tune" label="Tune" :size="56" hint="the fundamental" />
+        <ResKnob v-if="r.transpose" :p="r.transpose" label="Transpose" :size="44" hint="moves the whole object" />
+        <ResKnob v-if="r.fine" :p="r.fine" label="Fine" :size="42" hint="between the semitones" />
         <ResKnob v-if="r.ratio" :p="r.ratio" label="Ratio" :size="44" :off="off('ratio')" hint="rectangle aspect" />
         <ResKnob v-if="r.radius" :p="r.radius" label="Radius" :size="44" :off="off('radius')" hint="the bore" />
         <ResKnob v-if="r.opening" :p="r.opening" label="Opening" :size="48" :off="off('opening')" :hint="openingHint" />
@@ -104,7 +121,7 @@ const ax = (base, which) => {
         <ResKnob v-if="r.decay" :p="r.decay" label="Decay" :size="52" hint="the fundamental’s ring time" />
         <ResKnob v-if="r.material" :p="r.material" label="Material" :size="52" :off="off('material')" :hint="materialHint" />
         <ResKnob v-if="r.bright" :p="r.bright" label="Bright" :size="44" :off="off('bright')" hint="tilt about the fundamental" />
-        <ResKnob v-if="r.inharm" :p="r.inharm" label="Inharm" :size="44" :off="off('inharm')" hint="stretches the series" />
+        <ResKnob v-if="r.inharm" :p="r.inharm" label="Inharm" :size="44" :off="off('inharm')" :hint="inharmHint" />
         <!--
           Material on its own is a one-parameter loss law. These two are the
           other half of it: where the extra damping starts, and how steeply it
@@ -116,7 +133,7 @@ const ax = (base, which) => {
         <div v-if="r.tail" class="deck__stack">
           <span class="deck__cap">Tail</span>
           <Toggle :p="r.tail" variant="button" class="keys keys--lamp">on</Toggle>
-          <span class="deck__hint">let it ring out</span>
+          <span class="deck__hint">{{ tailHint }}</span>
         </div>
       </div>
     </section>
@@ -134,8 +151,9 @@ const ax = (base, which) => {
           <span class="deck__cap">Filter</span>
           <Toggle :p="r.filterOn" variant="button" class="keys keys--lamp">on</Toggle>
           <Segmented v-if="r.filterPlace" :p="r.filterPlace" class="keys keys--tiny" />
+          <span class="deck__hint">before or after the object</span>
         </div>
-        <ResKnob v-if="r.filterFreq" :p="r.filterFreq" label="Freq" :size="46" :off="off('filter_freq')" />
+        <ResKnob v-if="r.filterFreq" :p="r.filterFreq" label="Freq" :size="46" :off="off('filter_freq')" hint="where the strike is aimed" />
         <ResKnob v-if="r.filterWidth" :p="r.filterWidth" label="Width" :size="44" :off="off('filter_width')" hint="octaves, stated" />
       </div>
     </section>
@@ -148,7 +166,7 @@ const ax = (base, which) => {
           <Toggle :p="r.lfoOn" variant="button" class="keys keys--lamp">on</Toggle>
           <span class="deck__hint">{{ r.lfoShape ? r.lfoShape.label : '' }}</span>
         </div>
-        <ResKnob v-if="r.lfoRate" :p="r.lfoRate" label="Rate" :size="44" :off="off('lfo_rate')" />
+        <ResKnob v-if="r.lfoRate" :p="r.lfoRate" label="Rate" :size="44" :off="off('lfo_rate')" hint="how fast it wanders" />
         <ResKnob v-if="r.lfoDepth" :p="r.lfoDepth" label="Depth" :size="44" :off="off('lfo_depth')" hint="semitones, not an amount" />
         <ResKnob v-if="r.lfoPhase" :p="r.lfoPhase" label="Phase" :size="42" :off="off('lfo_phase')" hint="between the channels" />
       </div>
@@ -159,9 +177,9 @@ const ax = (base, which) => {
       <div class="deck__row">
         <ResKnob v-if="r.hit" :p="r.hit" :label="ax('Hit', 'x')" :size="46" :hint="axes.x.hint" />
         <ResKnob v-if="r.hitY" :p="r.hitY" :label="ax('Hit', 'y')" :size="42" :off="off('hit_y')" :hint="axes.y.hint" />
-        <ResKnob v-if="r.posL" :p="r.posL" :label="ax('Pos L', 'x')" :size="44" hint="left pickup" />
+        <ResKnob v-if="r.posL" :p="r.posL" :label="ax('Pos L', 'x')" :size="44" hint="where the left channel listens" />
         <ResKnob v-if="r.posLY" :p="r.posLY" :label="ax('Pos L', 'y')" :size="42" :off="off('pos_l_y')" :hint="axes.y.hint" />
-        <ResKnob v-if="r.posR" :p="r.posR" :label="ax('Pos R', 'x')" :size="44" hint="right pickup" />
+        <ResKnob v-if="r.posR" :p="r.posR" :label="ax('Pos R', 'x')" :size="44" hint="where the right channel listens" />
         <ResKnob v-if="r.posRY" :p="r.posRY" :label="ax('Pos R', 'y')" :size="42" :off="off('pos_r_y')" :hint="axes.y.hint" />
         <ResKnob v-if="r.spread" :p="r.spread" label="Spread" :size="42" hint="detunes the channels" />
         <ResKnob v-if="r.width" :p="r.width" label="Width" :size="42" hint="pans the pickups" />
@@ -178,8 +196,8 @@ const ax = (base, which) => {
           than a creative control. Ours says so on its face.
         -->
         <ResKnob v-if="r.bleed" :p="r.bleed" label="Bleed" :size="46" hint="dry back, for what the bank lost" />
-        <ResKnob v-if="r.mix" :p="r.mix" label="Dry/Wet" :size="48" />
-        <ResKnob v-if="r.gain" :p="r.gain" label="Gain" :size="44" />
+        <ResKnob v-if="r.mix" :p="r.mix" label="Dry/Wet" :size="48" hint="gates what goes in, so a tail rings out" />
+        <ResKnob v-if="r.gain" :p="r.gain" label="Gain" :size="44" hint="cuts and boosts, unlike theirs" />
         <!--
           Optional and zero-latency, so it is a choice rather than a thing
           done to you. The bench shows what it is actually taking off.
@@ -189,10 +207,11 @@ const ax = (base, which) => {
           <Toggle :p="r.limiter" variant="button" class="keys keys--lamp">on</Toggle>
           <span class="deck__hint">zero latency</span>
         </div>
-        <ResKnob v-if="r.limitCeil" :p="r.limitCeil" label="Ceiling" :size="42" :off="off('limit_ceil')" />
+        <ResKnob v-if="r.limitCeil" :p="r.limitCeil" label="Ceiling" :size="42" :off="off('limit_ceil')" hint="where the limiter catches" />
         <div v-if="r.bypass" class="deck__stack">
           <span class="deck__cap">Bypass</span>
           <Toggle :p="r.bypass" variant="button" class="keys keys--lamp">on</Toggle>
+          <span class="deck__hint">the whole device</span>
         </div>
       </div>
     </section>

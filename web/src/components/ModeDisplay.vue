@@ -52,6 +52,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   hzText,
   lengthText,
+  partialName,
   ratioShort,
   ratioText,
   timeText,
@@ -76,17 +77,46 @@ const designMode = useDesignMode();
 const fundamental = useFundamental();
 
 const box = ref(null);
+const plate = ref(null);
 const W = ref(760);
 const H = ref(240);
+/** The whole plate's height, which is what decides whether the optional rows fit. */
+const plateH = ref(400);
 let ro = null;
 onMounted(() => {
-  ro = new ResizeObserver(([e]) => {
-    W.value = Math.max(240, e.contentRect.width);
-    H.value = Math.max(110, e.contentRect.height);
+  ro = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      if (e.target === box.value) {
+        W.value = Math.max(240, e.contentRect.width);
+        H.value = Math.max(110, e.contentRect.height);
+      } else {
+        plateH.value = e.contentRect.height;
+      }
+    }
   });
   ro.observe(box.value);
+  ro.observe(plate.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
+
+/**
+ * Which of the optional rows fit.
+ *
+ * **Measured against the plate, not the window.** These used to be dropped by
+ * a viewport-height media query, which was the wrong variable: how much room
+ * the display has depends on how tall the deck is, and the deck's height
+ * depends on how many control groups an object has. So at 900 x 520 the
+ * provenance line spilled out over the deck and the plate had to be given
+ * `overflow: hidden` to contain it — a clip, not a fix, and one that would
+ * have silently swallowed the next thing added here.
+ *
+ * Now the plate reports its own height and the rows that do not fit are not
+ * rendered. Nothing is ever clipped, and adding a row later cannot hide one.
+ */
+const LEGEND_NEEDS = 128;
+const PROV_NEEDS = 158;
+const showLegend = computed(() => plateH.value >= LEGEND_NEEDS);
+const showProv = computed(() => plateH.value >= PROV_NEEDS);
 
 /** `t` is deep enough to clear the stamp, which sits inside the plot because it is a statement about the level axis. */
 const PAD = { l: 34, r: 10, t: 21, b: 25 };
@@ -181,7 +211,6 @@ const ringTicks = computed(() =>
 const crossX = computed(() => (info.crossoverHz > 0 ? xHz(info.crossoverHz) : null));
 
 const bars = computed(() => {
-  const edits = overrides.byIndex;
   return modes.list.map((p) => {
     const top = Math.max(p.dbL ?? DB_FLOOR, p.dbR ?? DB_FLOOR);
     return {
@@ -193,7 +222,7 @@ const bars = computed(() => {
       yL: yLevel(p.dbL ?? DB_FLOOR),
       yR: yLevel(p.dbR ?? DB_FLOOR),
       yTop: yLevel(top),
-      edited: edits.has(p.i),
+      edited: overrides.has(p.i, p.j),
       /** Nothing measurable came out of it. */
       dead: top <= DB_FLOOR + 0.5,
       /** The engine says this partial started higher, so a node took the difference. */
@@ -282,9 +311,19 @@ const ringPath = computed(() =>
 
 // --- the air column's response --------------------------------------------
 
+/**
+ * The engine's own magnitude response, for **either** engine.
+ *
+ * On an air column it is the primary reading — the resonances are the peaks
+ * of one loop and there is no list to draw. On a mode bank it goes *behind*
+ * the bars, faintly, and it is the one thing the bars cannot say: how wide
+ * each resonance is. Two objects with identical partials and different ring
+ * times draw identical bars and sound nothing alike, and this is the
+ * difference, drawn.
+ */
 const band = computed(() => {
   const pts = response.points;
-  if (!guide.value || !pts || pts.length < 8) return null;
+  if (!pts || pts.length < 8) return null;
   const g = geom.value;
   const [lo, hi] = response.range;
   const step = (hi / lo) ** (1 / (pts.length - 1));
@@ -313,18 +352,156 @@ const band = computed(() => {
  */
 const picked = ref(null);
 const lastSeen = ref(null);
+const isPicked = (p) => picked.value != null && picked.value === overrides.keyOf(p.i, p.j);
 const pickedPartial = computed(() => {
   if (picked.value == null) return null;
-  const live = bars.value.find((p) => p.i === picked.value);
+  const live = bars.value.find((p) => overrides.keyOf(p.i, p.j) === picked.value);
   if (live) {
     lastSeen.value = live;
     return live;
   }
-  return lastSeen.value && lastSeen.value.i === picked.value ? { ...lastSeen.value, offscreen: true } : null;
+  return lastSeen.value ? { ...lastSeen.value, offscreen: true } : null;
 });
 function pick(p) {
-  picked.value = picked.value === p.i ? null : p.i;
+  const k = overrides.keyOf(p.i, p.j);
+  picked.value = picked.value === k ? null : k;
   lastSeen.value = picked.value == null ? null : p;
+}
+function select(p) {
+  picked.value = overrides.keyOf(p.i, p.j);
+  lastSeen.value = p;
+}
+
+/**
+ * The partials, from the keyboard.
+ *
+ * **Editing a mode was mouse-only**, which made the one feature no competing
+ * device has unreachable without a pointer. Sixty-four tab stops would be
+ * worse than none, so the plot is a single stop and the arrows walk along the
+ * series — left and right by one, Home and End to the ends, Escape to let go.
+ * That is how a list of sixty-four things should be traversed anyway.
+ */
+function onPlotKey(e) {
+  const list = bars.value;
+  if (!list.length) return;
+  const here = picked.value == null ? -1 : list.findIndex((p) => overrides.keyOf(p.i, p.j) === picked.value);
+  let next = null;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = here < 0 ? 0 : Math.min(list.length - 1, here + 1);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = here < 0 ? list.length - 1 : Math.max(0, here - 1);
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = list.length - 1;
+  else if (e.key === 'Escape' && picked.value != null) {
+    picked.value = null;
+    e.preventDefault();
+    return;
+  } else return;
+  select(list[next]);
+  e.preventDefault();
+}
+
+// --- drawing across the modes ------------------------------------------
+
+/**
+ * Shaping the whole series by drawing across it.
+ *
+ * **The per-partial editor is right for a correction and hopeless for
+ * sixty-four of them.** The surface for the other gesture already exists —
+ * the display draws every partial against a level lane and a ring lane, each
+ * with its own scale — so a drag across a lane can set that quantity for
+ * every partial it passes.
+ *
+ * **It generates into the table and the table stays editable.** The drag
+ * writes ordinary per-mode overrides, exactly the ones a click would write,
+ * so afterwards you can still pick one partial and correct it by hand.
+ * Nothing is locked while drawing is on, and turning it off leaves the edits
+ * where they are. Draw the shape, then fix the two that are wrong.
+ *
+ * **Level and ring only, because those are the lanes that exist.** Pitch is a
+ * horizontal quantity on this display — a partial's frequency *is* its
+ * position — so dragging vertically cannot mean it, and detuning stays a
+ * per-partial edit rather than getting a gesture that would have to lie about
+ * its own axis.
+ *
+ * The gesture collects as it goes and commits once on release, so a drag
+ * across the whole series is one write and one thing to undo.
+ */
+const DRAW_TARGETS = [
+  { id: 'off', label: 'Off' },
+  { id: 'db', label: 'Level' },
+  { id: 'decay', label: 'Ring' },
+];
+const drawing = ref('off');
+/** Edits accumulated by the current drag, keyed by mode, shown before they are committed. */
+const pending = ref(new Map());
+let dragging = false;
+
+/** How far either side of the pointer a partial is taken to be under it, in pixels. */
+const REACH = 7;
+
+function svgPoint(e) {
+  const el = e.currentTarget;
+  const r = el.getBoundingClientRect();
+  return { x: ((e.clientX - r.left) / r.width) * W.value, y: ((e.clientY - r.top) / r.height) * H.value };
+}
+
+/** The value a y position means, for whichever lane is being drawn in. */
+function valueAt(y) {
+  const g = geom.value;
+  if (drawing.value === 'db') {
+    const t = (g.levelBottom - y) / Math.max(1, g.levelH);
+    return peakDb.value + DB_FLOOR * (1 - Math.min(1, Math.max(0, t)));
+  }
+  const t = (g.ringBottom - y) / Math.max(1, g.ringH);
+  return RING_LO * (RING_HI / RING_LO) ** Math.min(1, Math.max(0, t));
+}
+
+function paint(e) {
+  if (drawing.value === 'off' || !dragging) return;
+  const { x, y } = svgPoint(e);
+  const g = geom.value;
+  const inLevel = y >= g.levelTop - 6 && y <= g.levelBottom + 6;
+  const inRing = g.hasRing && y >= g.ringTop - 6 && y <= g.ringBottom + 6;
+  if (drawing.value === 'db' ? !inLevel : !inRing) return;
+  const target = valueAt(y);
+  const next = new Map(pending.value);
+  for (const p of bars.value) {
+    if (Math.abs(p.x - x) > REACH) continue;
+    const k = overrides.keyOf(p.i, p.j);
+    if (drawing.value === 'db') {
+      // The override is an offset from the level the partial would have had,
+      // so the drawn shape is what you get rather than what you get plus
+      // whatever the tilt was already doing.
+      const bare = p.bareDb != null ? p.bareDb : Math.max(p.dbL ?? DB_FLOOR, p.dbR ?? DB_FLOOR);
+      next.set(k, { i: p.i, j: p.j, db: Math.round((target - bare) * 10) / 10 });
+    } else if (p.ring > 0) {
+      // The published ring already includes any multiplier this mode has, so
+      // the base is that divided back out before the new one is worked out.
+      const had = overrides.get(p.i, p.j)?.decay ?? 1;
+      const base = p.ring / had;
+      next.set(k, { i: p.i, j: p.j, decay: Math.round((target / base) * 100) / 100 });
+    }
+  }
+  pending.value = next;
+}
+
+function startDraw(e) {
+  if (drawing.value === 'off') return;
+  dragging = true;
+  pending.value = new Map();
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  paint(e);
+}
+function endDraw() {
+  if (!dragging) return;
+  dragging = false;
+  const list = [...pending.value.values()];
+  pending.value = new Map();
+  if (list.length) overrides.setMany(list);
+}
+
+/** What a partial looks like right now, including a stroke not yet committed. */
+function previewOf(p) {
+  return pending.value.get(overrides.keyOf(p.i, p.j)) || null;
 }
 
 const top = computed(() => {
@@ -341,8 +518,30 @@ const top = computed(() => {
  * unmarked. Nothing was wrong on screen, which is exactly the problem — the
  * reader had no way to know the picture was short of a claim it usually makes.
  */
+/**
+ * The engine's own word for which engine is running, against the catalogue's.
+ *
+ * **Redundant on purpose, which is what makes it worth reading.** The panel
+ * already knows the object is a waveguide because the catalogue says so, and
+ * `info.engine` says it a second time from the other side of the wire. A
+ * field that always agrees costs nothing; the one time it disagrees, the page
+ * and the DSP have drifted apart about what is being synthesised, and that is
+ * a fault that would otherwise be invisible — the display would draw a
+ * perfectly reasonable picture of the wrong engine.
+ */
+const engineDisagrees = computed(() => {
+  if (info.engineIx == null) return false;
+  return (info.engineIx >= 0.5 ? 'waveguide' : 'modal') !== object.value.engine;
+});
+
 const missing = computed(() => {
   const out = [];
+  if (engineDisagrees.value) {
+    out.push(
+      `the engine reports a ${info.engineIx >= 0.5 ? 'waveguide' : 'mode bank'} and this object is a ` +
+        `${object.value.engine === 'waveguide' ? 'waveguide' : 'mode bank'} — one of the two is wrong`,
+    );
+  }
   if (guide.value && !response.live) {
     out.push('no response stream in this build, so the loop’s own curve is not drawn');
   }
@@ -369,7 +568,7 @@ const missing = computed(() => {
 const settling = computed(() => info.build != null && info.build < 0.999);
 
 const tip = (p) =>
-  `partial ${p.i + 1} · ${ratioText(p.ratio)}× · ${hzText(p.hz)}` +
+  `${partialName(p)} · ${ratioText(p.ratio)}× · ${hzText(p.hz)}` +
   (p.ring != null ? ` · rings ${timeText(p.ring)}` : '') +
   (p.dead ? ' · a node took it' : '') +
   (p.edited ? ' · edited' : '') +
@@ -377,12 +576,33 @@ const tip = (p) =>
 </script>
 
 <template>
-  <section class="md plate">
+  <section ref="plate" class="md plate">
     <div class="md__head">
       <h2 class="md__title">Where the partials land</h2>
       <span class="md__badge" :class="object.engine">
         {{ guide ? 'waveguide · one loop' : 'mode bank · one filter each' }}
       </span>
+      <!--
+        Drawing shapes the whole series; clicking corrects one partial. Both
+        write the same overrides, so one is never a mode you have to leave to
+        use the other.
+      -->
+      <div class="md__draw" role="group" aria-label="Draw across the modes">
+        <span class="md__drawcap">Draw</span>
+        <button
+          v-for="t in DRAW_TARGETS"
+          :key="t.id"
+          type="button"
+          class="md__drawkey"
+          :class="{ on: drawing === t.id }"
+          :disabled="t.id === 'decay' && !geom.hasRing"
+          :title="t.id === 'off' ? 'Click a partial to edit it' : `Drag across the ${t.id === 'db' ? 'level' : 'ring'} lane to shape every partial you pass`"
+          @click="drawing = t.id"
+        >
+          {{ t.label }}
+        </button>
+      </div>
+
       <div class="md__facts tabular">
         <span><b>{{ bars.length }}</b> drawn</span>
         <span>top at <b>{{ top }}</b></span>
@@ -393,7 +613,22 @@ const tip = (p) =>
     </div>
 
     <div ref="box" class="md__box">
-      <svg :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H">
+      <svg
+        :viewBox="`0 0 ${W} ${H}`"
+        :width="W"
+        :height="H"
+        tabindex="0"
+        role="listbox"
+        aria-label="The partial series. Arrow keys move between partials."
+        :aria-activedescendant="picked ? `partial-${picked.replace(':', '-')}` : undefined"
+        :class="{ 'is-drawing': drawing !== 'off' }"
+        @keydown="onPlotKey"
+        @pointerdown="startDraw"
+        @pointermove="paint"
+        @pointerup="endDraw"
+        @pointercancel="endDraw"
+        @pointerleave="endDraw"
+      >
         <g class="g-grid">
           <line v-for="t in rTicks" :key="`r${t.r}`" :x1="t.x" :y1="PAD.t" :x2="t.x" :y2="geom.ringBottom" :class="{ root: t.r === 1 }" />
           <line v-for="t in dbTicks" :key="`d${t.d}`" :x1="PAD.l" :y1="t.y" :x2="W - PAD.r" :y2="t.y" :class="{ zero: t.d === 0 }" />
@@ -414,6 +649,12 @@ const tip = (p) =>
           <line v-for="(gx, i) in ghostLines" :key="`gl${i}`" :x1="gx" :y1="geom.levelTop" :x2="gx" :y2="geom.levelBottom" />
         </g>
 
+        <!-- the bank's own response, behind its bars: how wide each resonance is -->
+        <g v-if="!guide && band" class="g-behind">
+          <path :d="band.fill" class="fill" />
+          <path :d="band.line" class="line" />
+        </g>
+
         <!-- the mode bank: one bar per resonator, up to where the ear stops separating them -->
         <g v-if="!guide">
           <path v-if="fusedFloor" :d="fusedFloor" class="g-fused-floor" />
@@ -428,11 +669,24 @@ const tip = (p) =>
               :height="Math.max(0, p.yTop - p.yBare)"
             />
           </g>
+          <g v-if="pending.size" class="g-pending">
+            <rect
+              v-for="p in resolved.filter((q) => previewOf(q))"
+              :key="`pd${p.i}-${p.j}`"
+              :x="p.x - barW / 2 - 1"
+              :y="geom.levelTop"
+              :width="barW + 2"
+              :height="Math.max(0, geom.levelBottom - geom.levelTop)"
+            />
+          </g>
           <g class="g-bar">
             <rect
               v-for="p in resolved"
               :key="`b${p.i}`"
-              :class="{ edited: p.edited, picked: p.i === picked }"
+              :class="{ edited: p.edited, picked: isPicked(p) }"
+              :id="`partial-${p.i}-${p.j || 0}`"
+              role="option"
+              :aria-selected="isPicked(p)"
               :x="p.x - barW / 2"
               :y="p.yL"
               :width="barW"
@@ -458,7 +712,7 @@ const tip = (p) =>
           <line
             v-for="p in bars"
             :key="`h${p.i}`"
-            :class="{ edited: p.edited, picked: p.i === picked, guide }"
+            :class="{ edited: p.edited, picked: isPicked(p), guide }"
             :x1="p.x"
             :y1="geom.levelBottom - 5"
             :x2="p.x"
@@ -504,21 +758,34 @@ const tip = (p) =>
       <ModeEditor v-if="pickedPartial" :partial="pickedPartial" @close="picked = null" />
     </div>
 
-    <div class="md__legend">
+    <div v-if="showLegend" class="md__legend">
       <span class="k"><i :style="{ background: guide ? 'var(--res-guide)' : 'var(--res-modal)' }" />{{ guide ? 'the loop’s response' : 'left channel' }}</span>
       <span v-if="!guide" class="k"><i style="background: var(--res-ink); opacity: 0.55" />right channel</span>
       <span v-if="modes.hasBare" class="k"><i style="background: var(--res-null)" />taken by a node</span>
       <span v-if="fused.length" class="k drop-short"><i style="background: color-mix(in srgb, var(--res-modal) 45%, transparent)" />fused into timbre</span>
+      <span v-if="!guide && band" class="k drop-short"><i style="background: color-mix(in srgb, var(--res-modal) 30%, transparent)" />how wide each resonance is</span>
       <span v-if="!geom.hasRing" class="k" style="color: var(--res-faint)">ring lane hidden · the window is too short</span>
       <span v-if="!fundamental.fromEngine" class="k drop-short" style="color: var(--res-faint)">axis on the Tune control</span>
       <span class="md__note">Click a partial to set its pitch, level and ring time.</span>
     </div>
 
-    <p v-if="missing.length" class="md__prov">{{ missing.join(' · ') }}.</p>
+    <p v-if="showProv && missing.length" class="md__prov" :class="{ 'is-fault': engineDisagrees }">
+      {{ missing.join(' · ') }}.
+    </p>
   </section>
 </template>
 
 <style scoped>
+/*
+ * Everything that is drawn *about* the series rather than being the series
+ * takes no pointer events. The crossover rule sits exactly on top of a
+ * partial by construction — it is drawn at one — and it was swallowing the
+ * click meant for that bar, so the partials nearest the one line the eye is
+ * drawn to were the ones that could not be selected.
+ */
+.g-grid, .g-axis, .g-ghostline, .g-cross, .g-cut, .g-ring, .g-dead,
+.g-fused, .g-fused-floor, .g-lost, .g-right, .g-curve { pointer-events: none; }
+
 .g-grid line { stroke: rgb(255 255 255 / 0.055); stroke-width: 1; }
 .g-grid line.zero { stroke: rgb(255 255 255 / 0.12); }
 .g-grid line.root { stroke: rgb(255 255 255 / 0.16); }
@@ -531,6 +798,10 @@ const tip = (p) =>
 .g-bar rect { fill: var(--res-modal); cursor: pointer; }
 .g-bar rect:hover { fill: #fff; }
 .g-bar rect.edited { fill: var(--res-brass); }
+/* Where the stroke has been, before it is committed on release. */
+.g-pending rect { fill: color-mix(in srgb, var(--res-brass) 14%, transparent); }
+svg.is-drawing { cursor: crosshair; }
+svg.is-drawing .g-bar rect, svg.is-drawing .g-handles line { cursor: crosshair; }
 .g-bar rect.picked { fill: #fff; }
 .g-right line { stroke: var(--res-ink); stroke-width: 1.3; opacity: 0.55; }
 .g-lost rect { fill: var(--res-null); opacity: 0.34; }
@@ -540,6 +811,14 @@ const tip = (p) =>
 .g-fused-floor { fill: color-mix(in srgb, var(--res-modal) 6%, transparent); stroke: none; }
 
 .g-curve .fill { fill: color-mix(in srgb, var(--res-guide) 20%, transparent); }
+/*
+ * The bank's response sits behind its own bars and must stay behind them:
+ * the bars are where the partials are, which is the argument, and this is the
+ * supporting detail of how sharp each one is.
+ */
+.g-behind { pointer-events: none; }
+.g-behind .fill { fill: color-mix(in srgb, var(--res-modal) 10%, transparent); }
+.g-behind .line { fill: none; stroke: color-mix(in srgb, var(--res-modal) 34%, transparent); stroke-width: 1; stroke-linejoin: round; }
 .g-curve .line { fill: none; stroke: var(--res-guide); stroke-width: 1.3; stroke-linejoin: round; }
 
 .g-handles line { stroke: rgb(220 227 236 / 0.3); stroke-width: 2.4; cursor: pointer; }

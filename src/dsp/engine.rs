@@ -53,9 +53,9 @@ use crate::dsp::tail::{BANDS, Tail};
 /// stream.
 pub const MAX_EDITS: usize = 64;
 /// Values in one `modes` frame.
-pub const MODE_FIELDS: usize = 6;
+pub const MODE_FIELDS: usize = 8;
 /// Values in one `info` frame.
-pub const INFO_LEN: usize = 12;
+pub const INFO_LEN: usize = 13;
 /// Points on the response curve.
 pub const RESPONSE_POINTS: usize = 512;
 /// Points of the response curve refreshed per block, so a redraw never lands
@@ -64,6 +64,9 @@ const RESPONSE_CHUNK: usize = 128;
 
 /// Blocks between readout refreshes while only the pitch is moving.
 const READOUT_BLOCKS: u32 = 8;
+
+/// Marks a mode slot that no override addresses.
+const NO_EDIT: u8 = u8::MAX;
 
 /// How far Spread pulls the two channels apart at full travel, in cents.
 /// A quarter tone, which is the same span the Fine control has.
@@ -85,9 +88,24 @@ pub const AUDIBLE_MAX_HZ: f32 = 20_000.0;
 /// rest is available for the synthetic extension.
 pub const INHARM_B_MAX: f32 = 3.0e-3;
 
-/// One partial's override, as the mode table sets it.
+/// One partial's override.
+///
+/// **Keyed by the mode's own identity, `(i, j)`, and not by where it happens
+/// to sit in the published frame.** A user who retunes a partial has edited
+/// *that resonance*; if the edit followed a frame position, changing
+/// `Selection` or the mode budget would reorder the frame underneath and
+/// silently reassign every override to a different partial — and the result
+/// would look entirely reasonable, which is the failure this project keeps
+/// catching late. Resolving identity to a row is the display's job and it
+/// happens at draw time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModeEdit {
+    /// The partial's first index: `n` on a line, `m` on a surface, the
+    /// resonance number in an air column. [`ModeEdit::NONE`] marks an empty
+    /// slot.
+    pub i: u16,
+    /// The second index; zero for anything one-dimensional.
+    pub j: u16,
     pub cents: f32,
     pub db: f32,
     /// A multiplier on the partial's T60.
@@ -97,6 +115,8 @@ pub struct ModeEdit {
 impl Default for ModeEdit {
     fn default() -> Self {
         ModeEdit {
+            i: ModeEdit::NONE,
+            j: 0,
             cents: 0.0,
             db: 0.0,
             decay: 1.0,
@@ -105,8 +125,22 @@ impl Default for ModeEdit {
 }
 
 impl ModeEdit {
-    fn is_neutral(&self) -> bool {
+    /// An `i` no partial has, marking an unused slot.
+    pub const NONE: u16 = u16::MAX;
+
+    /// Whether the slot addresses a partial at all.
+    pub fn is_set(&self) -> bool {
+        self.i != ModeEdit::NONE
+    }
+
+    /// Whether it addresses one and then does nothing to it.
+    pub fn is_neutral(&self) -> bool {
         self.cents == 0.0 && self.db == 0.0 && self.decay == 1.0
+    }
+
+    /// Whether it applies to the partial with these indices.
+    pub fn matches(&self, i: u16, j: u16) -> bool {
+        self.is_set() && self.i == i && self.j == j
     }
 }
 
@@ -260,6 +294,17 @@ pub struct Resonator {
     limiter: Limiter,
     edits: [ModeEdit; MAX_EDITS],
     edits_dirty: bool,
+    /// Where each live partial sat before inharmonicity moved it, so the
+    /// panel need not invert a stretch it cannot see. Sized once.
+    base_ratios: Vec<f32>,
+    /// Which edit slot, if any, owns each mode slot.
+    ///
+    /// The overrides are keyed by identity, so applying them means asking
+    /// "which edit is for *this* partial" once per mode. Doing that as a scan
+    /// inside the retune loop would be sixty-four comparisons per mode per
+    /// block while the oscillator runs; resolving it once when either side
+    /// changes makes it one byte of indirection.
+    edit_of: Vec<u8>,
 
     // Scratch, sized at construction so nothing allocates in `process`.
     exc: Vec<f32>,
@@ -321,6 +366,8 @@ impl Resonator {
             limiter: Limiter::default(),
             edits: [ModeEdit::default(); MAX_EDITS],
             edits_dirty: false,
+            edit_of: vec![NO_EDIT; max],
+            base_ratios: vec![1.0; max],
             exc: vec![0.0; crate::dsp::bank::BLOCK],
             wl: vec![0.0; crate::dsp::bank::BLOCK],
             wr: vec![0.0; crate::dsp::bank::BLOCK],
@@ -426,6 +473,32 @@ impl Resonator {
         }
     }
 
+    /// Resolve every live mode to the override that addresses it, if any.
+    fn map_edits(&mut self) {
+        let n = self.sel.result().len().min(self.edit_of.len());
+        self.edit_of[..n].fill(NO_EDIT);
+        let any = self.edits.iter().any(|e| e.is_set());
+        if !any {
+            return;
+        }
+        for (k, c) in self.sel.result()[..n].iter().enumerate() {
+            for (e, edit) in self.edits.iter().enumerate() {
+                if edit.matches(c.i, c.j) {
+                    self.edit_of[k] = e as u8;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The override applying to mode slot `k`, or a neutral one.
+    fn edit_at(&self, k: usize) -> ModeEdit {
+        match self.edit_of.get(k) {
+            Some(&e) if e != NO_EDIT => self.edits[e as usize],
+            _ => ModeEdit::default(),
+        }
+    }
+
     pub fn edits(&self) -> &[ModeEdit; MAX_EDITS] {
         &self.edits
     }
@@ -467,28 +540,59 @@ impl Resonator {
             self.sel.available()
         };
         let t = self.tail.report();
+        // **A field that does not apply publishes NaN, never zero.** A real
+        // zero and an uncomputed one are indistinguishable to a panel, and a
+        // plausible zero is worse than a blank: it reads as a measurement
+        // nothing made. The page turns any non-finite value into an absent
+        // readout, so this is the difference between "no wall to draw" and
+        // "a wall at 0 Hz".
+        let na = f32::NAN;
         [
             used as f32,
             available as f32,
-            if guide { 0.0 } else { self.crossover },
-            if t.level_db.is_finite() {
+            if guide { na } else { self.crossover },
+            // Silent is a real answer and gets a number; not applicable does
+            // not.
+            if guide {
+                na
+            } else if t.level_db.is_finite() {
                 t.level_db
             } else {
                 -120.0
             },
-            self.limit_db,
-            self.set.inharm_b(),
-            if guide {
-                self.guides[0].column_m()
-            } else {
-                0.0
-            },
-            if guide { self.guides[0].loop_ms() } else { 0.0 },
-            if guide { self.guides[0].open_hz() } else { 0.0 },
+            if self.set.limiter { self.limit_db } else { na },
+            if guide { na } else { self.set.inharm_b() },
+            if guide { self.guides[0].column_m() } else { na },
+            if guide { self.guides[0].loop_ms() } else { na },
+            if guide { self.guides[0].open_hz() } else { na },
             if guide { 1.0 } else { 0.0 },
             self.sel.progress(),
             self.f0[0],
+            self.ceiling_hz(),
         ]
+    }
+
+    /// The highest frequency the bank has a partial at, or **NaN when there
+    /// is no ceiling** — because it has every partial the object has, or
+    /// because the object is an air column with no mode list at all.
+    ///
+    /// The distinction is the point: a bar has twenty-eight partials and the
+    /// bank runs every one, so there is nothing above which the object stops.
+    /// A membrane at a low tuning has fifty thousand and the bank runs a few
+    /// thousand, and where that runs out is a real edge a listener can hear —
+    /// which is what the statistical tail exists to cover.
+    ///
+    /// Not zero for "none", because zero is a frequency and a panel cannot
+    /// tell it from a wall at the bottom of the band.
+    pub fn ceiling_hz(&self) -> f32 {
+        if self.set.object().engine() == ObjEngine::Guide {
+            return f32::NAN;
+        }
+        let info = self.banks[0].info();
+        if info.is_empty() || info.len() >= self.sel.available() {
+            return f32::NAN;
+        }
+        info.iter().fold(0.0f32, |m, i| m.max(i.hz))
     }
 
     /// The partials frame: up to [`MAX_EDITS`] partials, six floats each,
@@ -734,11 +838,7 @@ impl Resonator {
             let count = self.banks[0].len();
             for k in 0..count {
                 let ratio = self.sel.result()[k].ratio;
-                let cents = if k < MAX_EDITS {
-                    2f32.powf(self.edits[k].cents / 1200.0)
-                } else {
-                    1.0
-                };
+                let cents = 2f32.powf(self.edit_at(k).cents / 1200.0);
                 for side in 0..if self.stereo { 2 } else { 1 } {
                     let hz = (sides[side] * ratio * cents).clamp(1.0, nyq);
                     self.banks[side].retune(k, hz);
@@ -757,6 +857,7 @@ impl Resonator {
         self.loaded = self.sel.generation();
         self.edits_dirty = false;
         self.applied = Some(damping);
+        self.map_edits();
 
         // The bank's overall scale: unit power gain, so that turning the mode
         // budget up does not turn the device up. Each mode is already
@@ -780,16 +881,20 @@ impl Resonator {
         let nyq = self.sr * 0.49;
         let sides: [f32; 2] = [a, b];
         let count = chosen.len();
+        // Where each partial sat before inharmonicity moved it. Filled into
+        // a buffer that was allocated at construction, because this runs on
+        // the audio thread; `Shape::base_ratio` is the only thing that knows
+        // it, and the panel would otherwise have to invert a stretch it
+        // cannot see.
+        for (k, c) in chosen.iter().enumerate().take(self.base_ratios.len()) {
+            self.base_ratios[k] = shape.base_ratio(c.i, c.j) as f32;
+        }
         for side in 0..if self.stereo { 2 } else { 1 } {
             self.banks[side].begin(count);
         }
         for k in 0..count {
             let c = chosen[k];
-            let edit = if k < MAX_EDITS {
-                self.edits[k]
-            } else {
-                ModeEdit::default()
-            };
+            let edit = self.edit_at(k);
             let cents = 2f32.powf(edit.cents / 1200.0);
             let gain = self.scale * 10f32.powf(edit.db / 20.0);
             for side in 0..if self.stereo { 2 } else { 1 } {
@@ -806,9 +911,13 @@ impl Resonator {
                 let amp_in = if live { c.amp_in * gain } else { 0.0 };
                 let info = ModeInfo {
                     hz,
+                    base_hz: sides[side] * self.base_ratios[k] * cents,
                     t60,
                     amp_l: (c.amp_in * gain * c.amp_l).abs(),
                     amp_r: (c.amp_in * gain * c.amp_r).abs(),
+                    // The same partial with unit mode shapes at both
+                    // contacts: what the tilt alone gives it.
+                    bare: (guide::tilt(hz, damping.f0, s.bright_db_oct) * gain).abs(),
                     i: c.i,
                     j: c.j,
                 };
@@ -844,8 +953,9 @@ impl Resonator {
     }
 
     fn edit_gain(&self, k: usize) -> f32 {
-        if k < MAX_EDITS && !self.edits[k].is_neutral() {
-            10f32.powf(self.edits[k].db / 20.0)
+        let e = self.edit_at(k);
+        if e.is_set() && !e.is_neutral() {
+            10f32.powf(e.db / 20.0)
         } else {
             1.0
         }
@@ -856,70 +966,74 @@ impl Resonator {
     fn publish_modes(&mut self) {
         self.modes_frame.fill(0.0);
         let object = self.set.object();
-        let mut rows: [(f32, f32, f32, f32, f32, f32); MAX_EDITS] =
-            [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); MAX_EDITS];
+        let mut rows: [Row; MAX_EDITS] = [[0.0; MODE_FIELDS]; MAX_EDITS];
         let mut n = 0usize;
         if object.engine() == ObjEngine::Guide {
             for res in self.guides[0].resonances().iter().take(MAX_EDITS) {
-                rows[n] = (
+                rows[n] = [
                     res.n as f32,
                     0.0,
                     res.hz,
                     db(res.amp_l),
                     db(res.amp_r),
                     res.t60,
-                );
+                    db(res.bare),
+                    // An air column's series is set by its terminations, so
+                    // there is no unstretched frequency to report.
+                    res.hz,
+                ];
                 n += 1;
             }
         } else {
             // The loudest, not the lowest: the display should show what is
             // audible, which is the same decision the selector makes.
             let info = self.banks[0].info();
+            let row_of = |m: &ModeInfo| -> Row {
+                [
+                    m.i as f32,
+                    m.j as f32,
+                    m.hz,
+                    db(m.amp_l),
+                    db(m.amp_r),
+                    m.t60,
+                    db(m.bare),
+                    m.base_hz,
+                ]
+            };
             let mut worst = 0usize;
-            for m in info.iter() {
-                let a = m.amp_l.max(m.amp_r);
+            for (k, m) in info.iter().enumerate() {
+                // An edited partial is always published, however quiet the
+                // edit made it. Turning one down forty decibels should not
+                // make it leave the picture being used to edit it.
+                let keep = self.edit_of.get(k).is_some_and(|&e| e != NO_EDIT);
+                let a = if keep {
+                    f32::INFINITY
+                } else {
+                    m.amp_l.max(m.amp_r)
+                };
                 if n < MAX_EDITS {
-                    rows[n] = (
-                        m.i as f32,
-                        m.j as f32,
-                        m.hz,
-                        db(m.amp_l),
-                        db(m.amp_r),
-                        m.t60,
-                    );
+                    rows[n] = row_of(m);
                     n += 1;
                     if n == MAX_EDITS {
                         worst = argmin_amp(&rows[..n]);
                     }
                 } else {
                     let cur = 10f32
-                        .powf(rows[worst].3 / 20.0)
-                        .max(10f32.powf(rows[worst].4 / 20.0));
+                        .powf(rows[worst][3] / 20.0)
+                        .max(10f32.powf(rows[worst][4] / 20.0));
                     if a > cur {
-                        rows[worst] = (
-                            m.i as f32,
-                            m.j as f32,
-                            m.hz,
-                            db(m.amp_l),
-                            db(m.amp_r),
-                            m.t60,
-                        );
+                        rows[worst] = row_of(m);
                         worst = argmin_amp(&rows[..n]);
                     }
                 }
             }
             rows[..n].sort_unstable_by(|p, q| {
-                p.2.partial_cmp(&q.2).unwrap_or(std::cmp::Ordering::Equal)
+                p[2].partial_cmp(&q[2]).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
         for (k, row) in rows[..n].iter().enumerate() {
             let base = k * MODE_FIELDS;
-            self.modes_frame[base] = row.0;
-            self.modes_frame[base + 1] = row.1;
-            self.modes_frame[base + 2] = row.2;
-            self.modes_frame[base + 3] = row.3;
-            self.modes_frame[base + 4] = row.4;
-            self.modes_frame[base + 5] = row.5;
+            self.modes_frame[base..base + MODE_FIELDS].copy_from_slice(row);
         }
     }
 
@@ -951,11 +1065,14 @@ impl Resonator {
     }
 }
 
-fn argmin_amp(rows: &[(f32, f32, f32, f32, f32, f32)]) -> usize {
+/// One published partial: the `modes` frame's row layout.
+type Row = [f32; MODE_FIELDS];
+
+fn argmin_amp(rows: &[Row]) -> usize {
     let mut best = 0usize;
     let mut lo = f32::INFINITY;
     for (k, r) in rows.iter().enumerate() {
-        let a = r.3.max(r.4);
+        let a = r[3].max(r[4]);
         if a < lo {
             lo = a;
             best = k;

@@ -101,7 +101,17 @@ pub const RADIUS_REF_MM: f32 = 20.0;
 
 /// Longest one-way delay, in samples. Twenty hertz at 192 kHz with the LFO an
 /// octave down needs 9,600; this is the next power of two above it.
+///
+/// **A power of two on purpose**, so the circular buffers wrap with a mask.
+/// A waveguide's cost is index arithmetic rather than signal processing: the
+/// two loss filters are a handful of multiplies and everything else is
+/// working out where in a buffer to read. Written with `%` it is six integer
+/// divisions per sample, which was measured at three times the cost of the
+/// whole rest of the loop.
 const MAX_RAIL: usize = 16384;
+
+/// The mask that wraps an index into [`MAX_RAIL`].
+const RAIL_MASK: usize = MAX_RAIL - 1;
 
 /// Shortest total loop, in samples. Below this the interpolator's four taps
 /// and the two filters have nowhere to sit.
@@ -167,6 +177,13 @@ enum Far {
 
 /// A delay line with a fractional read.
 ///
+/// **The rails carry pressure**, and every sign in this file is that
+/// convention: a closed end is a pressure antinode and reflects with the same
+/// sign, an open end is a pressure node and reflects inverted. Carrying
+/// particle velocity instead inverts the entire series, so the choice has to
+/// be stated where the samples are rather than left to be inferred from the
+/// reflection coefficients.
+///
 /// Third-order Lagrange rather than linear interpolation, because this delay
 /// sits inside a feedback loop: linear interpolation is a lowpass, and a
 /// lowpass applied once per round trip becomes the loop's dominant loss and
@@ -193,7 +210,7 @@ impl Rail {
 
     #[inline]
     fn advance(&mut self) {
-        self.w = (self.w + 1) % self.buf.len();
+        self.w = (self.w + 1) & RAIL_MASK;
     }
 
     /// Write at the input (delay zero), replacing whatever was there.
@@ -211,12 +228,11 @@ impl Rail {
         if x == 0.0 {
             return;
         }
-        let d = delay.clamp(0.0, (self.buf.len() - 2) as f32);
+        let d = delay.clamp(0.0, (MAX_RAIL - 2) as f32);
         let i = d.floor() as usize;
         let f = d - i as f32;
-        let n = self.buf.len();
-        let a = (self.w + n - i) % n;
-        let b = (self.w + n - i - 1) % n;
+        let a = (self.w + MAX_RAIL - i) & RAIL_MASK;
+        let b = (self.w + MAX_RAIL - i - 1) & RAIL_MASK;
         self.buf[a] += x * (1.0 - f);
         self.buf[b] += x * f;
     }
@@ -224,11 +240,10 @@ impl Rail {
     /// Read at a fractional delay, third-order Lagrange.
     #[inline]
     fn read(&self, delay: f32) -> f32 {
-        let n = self.buf.len();
-        let d = delay.clamp(1.0, (n - 3) as f32);
+        let d = delay.clamp(1.0, (MAX_RAIL - 3) as f32);
         let i = d.floor() as usize;
         let f = d - i as f32;
-        let g = |k: usize| self.buf[(self.w + n - k) % n];
+        let g = |k: usize| self.buf[(self.w + MAX_RAIL - k) & RAIL_MASK];
         let (y0, y1, y2, y3) = (g(i - 1), g(i), g(i + 1), g(i + 2));
         // Lagrange 3 about the interval [y1, y2].
         let c0 = y1;
@@ -281,6 +296,8 @@ pub struct Resonance {
     pub t60: f32,
     pub amp_l: f32,
     pub amp_r: f32,
+    /// What it would reach with no comb from the contact points.
+    pub bare: f32,
     /// Which resonance of the loop it is, one-based; the same index a
     /// per-mode edit addresses.
     pub n: u16,
@@ -598,6 +615,24 @@ impl Guide {
             .scale(self.drive * tilt(hz, self.set.f0, self.set.tilt_db_oct))
     }
 
+    /// What a resonance would reach with no comb from the contact points:
+    /// the loop's own gain, times the spectral tilt.
+    ///
+    /// The panel draws this behind the bars so a partial the strike or the
+    /// pickup has nulled reads as energy **removed** rather than energy that
+    /// was never there. The two are the same height on a display that only
+    /// draws what came out.
+    pub fn bare(&self, hz: f32) -> f32 {
+        let w = std::f32::consts::TAU * hz / self.sr;
+        let den = C(1.0, 0.0).add(
+            self.loss_at(w)
+                .mul(self.far_reflection(w))
+                .mul(C::unit(-w * 2.0 * self.half)),
+        );
+        let m = den.abs().max(1e-9);
+        self.drive * tilt(hz, self.set.f0, self.set.tilt_db_oct) / m
+    }
+
     /// The magnitude the panel draws: the two pickups, power-averaged.
     pub fn response(&self, hz: f32) -> f32 {
         let l = self.response_at(hz, self.set.pos_l).abs();
@@ -643,6 +678,7 @@ impl Guide {
                 t60: self.damping.t60_at(hz),
                 amp_l: l,
                 amp_r: r,
+                bare: self.bare(hz),
                 n: n as u16,
             };
             count += 1;

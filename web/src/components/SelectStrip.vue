@@ -31,13 +31,13 @@
 import { computed } from 'vue';
 import { Segmented } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import ResKnob from './ResKnob.vue';
-import { countText, hzText, inactive, useInfo, useModes, useObject, useObjectTable, useRes } from '../composables/useResonator.js';
+import { countText, hzText, inactive, useInfo, useModes, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
 
 const r = useRes();
 const object = useObject();
 const modes = useModes();
 const info = useInfo();
-const table = useObjectTable();
+const meta = useObjectMeta();
 
 const guide = computed(() => object.value.engine === 'waveguide');
 const drawn = computed(() => modes.list.length);
@@ -50,6 +50,17 @@ const word = computed(() => {
   return l === 'Lowest' ? 'lowest' : l === 'Log Spread' ? 'spread across the range' : 'loudest';
 });
 const wall = computed(() => (info.ceilingHz && info.ceilingHz > 0 ? info.ceilingHz : null));
+
+/**
+ * Whether this object has a selection to make at all.
+ *
+ * An air column does not: its resonances are the peaks of one delay loop and
+ * they all come out of it at one cost, so there is no budget to spend and
+ * nothing to choose between. The keys grey with the rest of the controls the
+ * engine says this object does not read, rather than staying live and
+ * quietly doing nothing.
+ */
+const selectOff = computed(() => inactive('select', object.value, meta.value));
 /**
  * Whether the engine publishes where the bank runs out.
  *
@@ -63,8 +74,12 @@ const hasCeiling = computed(() => info.ceilingHz != null);
 <template>
   <section class="sel plate">
     <div class="sel__left">
-      <h2 class="cap sel__cap">Select<span class="why">how the mode budget is spent</span></h2>
-      <Segmented v-if="r.select" :p="r.select" class="keys keys--sel" />
+      <h2 class="cap sel__cap">
+        Select<span class="why">{{ selectOff ? selectOff.short : 'how the mode budget is spent' }}</span>
+      </h2>
+      <div class="sel__keys" :class="{ 'is-off': !!selectOff }" :title="selectOff ? selectOff.why : null">
+        <Segmented v-if="r.select" :p="r.select" class="keys keys--sel" />
+      </div>
     </div>
 
     <ResKnob
@@ -72,7 +87,7 @@ const hasCeiling = computed(() => info.ceilingHz != null);
       :p="r.modes"
       label="Modes"
       :size="38"
-      :off="inactive('modes', object, table)"
+      :off="inactive('mode_budget', object, meta)"
       hint="resonators, not partials"
     />
 

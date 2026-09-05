@@ -382,7 +382,7 @@ test('what an object has is a fact about the object, not about the mode count', 
   assert.equal(selectPartials(all, 'Lowest', 16).length, 16, 'sixteen resonators');
 });
 
-test('an override moves the partial it names and leaves the rest alone', () => {
+test('an override moves the mode it names and leaves the rest alone', () => {
   const s = {
     object: 'string',
     f0: 220, modes: 12, select: 'Loudest', inharm: 0, bright: 0, material: 0, decay: 2,
@@ -390,23 +390,65 @@ test('an override moves the partial it names and leaves the rest alone', () => {
     ratio: 1, opening: 1, radius: 20, barSecond: 4, barThird: 9.2, nyquist: 24000, edits: [],
   };
   const plain = computePartials(s);
-  const edited = computePartials({ ...s, edits: [{ i: 2, cents: 1200, db: -6, decay: 2 }] });
-  // An octave up is exactly twice the frequency, and it is the third partial
-  // that moved because the override addresses a physical index.
-  close(edited[2].hz, plain[2].hz * 2, 1e-9, 'partial 3, an octave up');
-  close(edited[2].dbL, plain[2].dbL - 6, 1e-9, 'and six decibels down');
-  // **And the pitch override moved its ring time too**, which is worth
-  // pinning because it is not obvious: the damping law is a function of
-  // frequency, so a partial retuned an octave up is already ringing for half
-  // as long before the multiplier is applied to it.
-  close(edited[2].ring, ringSeconds(edited[2].hz, s.f0, s.decay, s.material) * 2, 1e-12, 'the law at its new frequency, doubled');
-  close(edited[2].ring, plain[2].ring, 1e-12, 'an octave up and twice as long is exactly where it started');
-  // The multiplier on its own, with nothing else touched, is just a multiplier.
-  const slower = computePartials({ ...s, edits: [{ i: 2, decay: 2 }] });
-  close(slower[2].ring, plain[2].ring * 2, 1e-12, 'twice as long');
-  for (const i of [0, 1, 3, 4]) {
-    close(edited[i].hz, plain[i].hz, 1e-9, `partial ${i + 1} untouched`);
-  }
+  // A string's third mode is `i = 3`, `j = 0` — the mode's own number, not a
+  // row in a list.
+  const edited = computePartials({ ...s, edits: [{ i: 3, j: 0, cents: 1200, db: -6, decay: 2 }] });
+  const at = (list, mi) => list.find((q) => q.mi === mi);
+  close(at(edited, 3).hz, at(plain, 3).hz * 2, 1e-9, 'mode 3, an octave up');
+  close(at(edited, 3).dbL, at(plain, 3).dbL - 6, 1e-9, 'and six decibels down');
+  // The damping law is read at the partial's own frequency, so a pitch
+  // override moves its ring time too: an octave up is already half as long
+  // before the multiplier is applied.
+  close(at(edited, 3).ring, ringSeconds(at(edited, 3).hz, s.f0, s.decay, s.material) * 2, 1e-12, 'the law at its new frequency, doubled');
+  for (const mi of [1, 2, 4, 5]) close(at(edited, mi).hz, at(plain, mi).hz, 1e-9, `mode ${mi} untouched`);
+});
+
+test('on a surface the override needs both indices, or it hits several modes', () => {
+  // **The reason the key is a pair.** A rectangle's modes routinely share a
+  // first index: (2,1) and (2,3) are different shapes at different
+  // frequencies. Keyed on `i` alone, one edit would land on both, and the
+  // display would look entirely reasonable while it happened.
+  const s = {
+    object: 'membrane',
+    f0: 110, modes: 64, select: 'Loudest', inharm: 0, bright: 0, material: 0, decay: 2,
+    hit: 0.5, hitY: 0.5, posL: 0.5, posLY: 0.5, posR: 0.5, posRY: 0.5, spread: 0,
+    ratio: 1, opening: 1, radius: 20, barSecond: 4, barThird: 9.2, nyquist: 24000, edits: [],
+  };
+  const plain = computePartials(s);
+  const sharing = plain.filter((q) => q.mi === 2);
+  assert.ok(sharing.length > 1, `a rectangle should have several modes with i = 2, found ${sharing.length}`);
+
+  const j = sharing[0].mj;
+  const edited = computePartials({ ...s, edits: [{ i: 2, j, cents: 600 }] });
+  const moved = edited.filter((q, k) => Math.abs(q.hz - plain[k].hz) > 1e-6);
+  assert.equal(moved.length, 1, `exactly one mode should move, ${moved.length} did`);
+  assert.equal(moved[0].mi, 2);
+  assert.equal(moved[0].mj, j);
+});
+
+test('a mode carries its own identity, and only a surface has two indices', () => {
+  const line = computePartials({
+    object: 'string', f0: 220, modes: 8, select: 'Loudest', inharm: 0, bright: 0, material: 0,
+    decay: 2, hit: 0.5, hitY: 0.5, posL: 0.5, posLY: 0.5, posR: 0.5, posRY: 0.5, spread: 0,
+    ratio: 1, opening: 1, radius: 20, barSecond: 4, barThird: 9.2, nyquist: 24000, edits: [],
+  });
+  line.slice(0, 8).forEach((q, k) => {
+    assert.equal(q.mi, k + 1, 'a one-dimensional mode is numbered from one');
+    assert.equal(q.mj, 0, 'and has no second index');
+  });
+  const disc = computePartials({
+    object: 'membrane_round', f0: 110, modes: 32, select: 'Loudest', inharm: 0, bright: 0,
+    material: 0, decay: 2, hit: 0.5, hitY: 0.5, posL: 0.5, posLY: 0.5, posR: 0.5, posRY: 0.5,
+    spread: 0, ratio: 1, opening: 1, radius: 20, barSecond: 4, barThird: 9.2, nyquist: 24000, edits: [],
+  });
+  // The fundamental of a drum head is circularly symmetric: no nodal
+  // diameters, one nodal circle — the rim.
+  assert.equal(disc[0].mi, 0);
+  assert.equal(disc[0].mj, 1);
+  assert.ok(disc.every((q) => q.mj >= 1), 'every mode of a disc has at least one nodal circle');
+  // And the pair is unique, which is what makes it usable as a key.
+  const keys = new Set(disc.map((q) => `${q.mi}:${q.mj}`));
+  assert.equal(keys.size, disc.length, 'mode identities must be unique');
 });
 
 // ---------------------------------------------------------------------------

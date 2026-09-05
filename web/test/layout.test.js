@@ -1,0 +1,122 @@
+/**
+ * Reading a stream by the names it declares.
+ *
+ * **This is the mechanism every optional readout on the panel rests on**, and
+ * until now it had no test. The page never reads a stream field by offset: it
+ * asks for `db_bare` by name, and a build that does not publish it gets
+ * nothing back and simply does not draw the node ghosts. Reading by offset
+ * would print whichever field happened to sit at that index — a wrong number
+ * structurally indistinguishable from a right one, which is the failure this
+ * whole design exists to make impossible.
+ *
+ * The three cases that must all come back as "absent", because to a reader
+ * they mean the same thing:
+ *
+ * * the build does not declare the field,
+ * * no frame has arrived,
+ * * the engine published a non-finite value for it.
+ *
+ * That last one is the rule the design manifest's `info` frame now follows:
+ * an unset field must be **absent, not plausible**. It was zero-filled once,
+ * and the level meter dutifully reported `0.0 dB GR` for a measurement
+ * nothing had made.
+ *
+ *   npm test
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fieldAt, parseLayout } from '../src/streams.js';
+
+/** The engine's own two layouts, as `dsp::streams` declares them. */
+const MODES = 'i,j,hz,db_l,db_r,t60_s';
+const INFO =
+  'modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz';
+
+test('a layout string becomes names, a stride and an index', () => {
+  const l = parseLayout(MODES);
+  assert.deepEqual(l.names, ['i', 'j', 'hz', 'db_l', 'db_r', 't60_s']);
+  assert.equal(l.stride, 6, 'the stride is what walks the frame');
+  assert.equal(l.index.hz, 2);
+  assert.equal(l.index.t60_s, 5);
+  assert.equal(parseLayout(INFO).stride, 12);
+});
+
+test('whitespace and an empty layout are survivable', () => {
+  assert.deepEqual(parseLayout(' a , b ,c ').names, ['a', 'b', 'c']);
+  for (const bad of ['', null, undefined]) {
+    const l = parseLayout(bad);
+    assert.equal(l.stride, 0);
+    assert.equal(fieldAt([1, 2, 3], l, 'hz'), null, 'and asking it for anything gives nothing');
+  }
+});
+
+test('a field the build does not declare reads as absent', () => {
+  const l = parseLayout(MODES);
+  const frame = [3, 0, 440, -6, -6, 1.2];
+  assert.equal(fieldAt(frame, l, 'hz'), 440);
+  // The three the engine does not publish. Each darkens exactly one readout.
+  for (const name of ['db_bare', 'base_hz', 'ceiling_hz']) {
+    assert.equal(fieldAt(frame, l, name), null, `${name} must be absent, not guessed`);
+  }
+});
+
+test('a non-finite value is "not computed", not a number', () => {
+  const l = parseLayout(INFO);
+  const frame = new Float32Array(12).fill(NaN);
+  frame[l.index.modes_used] = 109;
+  assert.equal(fieldAt(frame, l, 'modes_used'), 109);
+  // The one that caught this: an uncomputed gain reduction must not read as
+  // "the limiter is taking nothing off".
+  assert.equal(fieldAt(frame, l, 'limit_gr_db'), null);
+  assert.equal(fieldAt(frame, l, 'ceiling_hz'), null);
+});
+
+test('and a real zero survives, because zero is a measurement', () => {
+  const l = parseLayout(INFO);
+  const frame = new Float32Array(12).fill(NaN);
+  frame[l.index.limit_gr_db] = 0;
+  assert.equal(fieldAt(frame, l, 'limit_gr_db'), 0, 'the limiter really is taking nothing off');
+  assert.notEqual(fieldAt(frame, l, 'limit_gr_db'), null);
+});
+
+test('no frame at all reads as absent rather than throwing', () => {
+  const l = parseLayout(INFO);
+  for (const f of [null, undefined]) assert.equal(fieldAt(f, l, 'modes_used'), null);
+});
+
+test('a per-partial frame is walked by stride, not by fixed offsets', () => {
+  const l = parseLayout(MODES);
+  // Two modes of a surface, sharing a first index — which is exactly why the
+  // override key is the pair.
+  const frame = [2, 1, 220, -3, -3, 2.0, 2, 3, 660, -9, -9, 0.7];
+  const read = (k) => ({
+    i: fieldAt(frame, l, 'i', k * l.stride),
+    j: fieldAt(frame, l, 'j', k * l.stride),
+    hz: fieldAt(frame, l, 'hz', k * l.stride),
+  });
+  assert.deepEqual(read(0), { i: 2, j: 1, hz: 220 });
+  assert.deepEqual(read(1), { i: 2, j: 3, hz: 660 });
+  assert.notEqual(`${read(0).i}:${read(0).j}`, `${read(1).i}:${read(1).j}`, 'the pair tells them apart');
+});
+
+test('the engine may move a field and the page still finds it', () => {
+  // The point of names over offsets: this layout is the same fields in a
+  // different order, and every read still lands on the right one.
+  const shuffled = parseLayout('hz,t60_s,i,j,db_l,db_r');
+  const frame = [440, 1.2, 3, 0, -6, -7];
+  assert.equal(fieldAt(frame, shuffled, 'hz'), 440);
+  assert.equal(fieldAt(frame, shuffled, 'i'), 3);
+  assert.equal(fieldAt(frame, shuffled, 't60_s'), 1.2);
+  assert.equal(fieldAt(frame, shuffled, 'db_r'), -7);
+});
+
+test('a longer layout does not break a shorter reader', () => {
+  // If the engine adds the three fields that have been asked for, nothing on
+  // the page needs to change to keep working — and the readouts that wanted
+  // them light up on their own.
+  const grown = parseLayout('i,j,hz,db_l,db_r,t60_s,db_bare,base_hz');
+  const frame = [3, 0, 440, -6, -6, 1.2, -1.5, 430];
+  assert.equal(fieldAt(frame, grown, 'hz'), 440, 'the old fields are still right');
+  assert.equal(fieldAt(frame, grown, 'db_bare'), -1.5, 'and the new ones simply appear');
+  assert.equal(fieldAt(frame, grown, 'base_hz'), 430);
+});

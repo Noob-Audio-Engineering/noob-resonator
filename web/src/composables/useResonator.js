@@ -32,8 +32,10 @@ import {
   useWindowSize,
 } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import { objectAt } from '../objects.js';
+import { fieldAt, parseLayout } from '../streams.js';
 
 export { getClient, hasParam, hasStream, useParam, useNoobVstWebguiFramework, useStoredRef };
+export { fieldAt, parseLayout } from '../streams.js';
 
 /** Smallest window the panel lays out in, `[width, height]` CSS pixels; the Rust side will clamp to the same. */
 export const WINDOW_MIN = [900, 520];
@@ -57,7 +59,7 @@ export function useRes() {
   res = {
     type: p('type'),
     select: p('select'),
-    modes: p('modes'),
+    modes: p('mode_budget'),
     tune: p('tune'),
     transpose: p('transpose'),
     fine: p('fine'),
@@ -96,6 +98,18 @@ export function useRes() {
     limiter: p('limiter'),
     limitCeil: p('limit_ceil'),
     bypass: p('bypass'),
+    /**
+     * The standalone's demo source, absent under a plug-in.
+     *
+     * A resonator supplies a body and the incoming audio supplies the strike,
+     * so with no host feeding it there is nothing to excite and the panel
+     * sits silent. These three are how a developer hits it. They live on the
+     * bench because they are not part of the device — the same place the
+     * sibling lab keeps its own.
+     */
+    srcKind: p('src_kind'),
+    srcLevel: p('src_level'),
+    srcFreq: p('src_freq'),
   };
   return res;
 }
@@ -123,18 +137,18 @@ export function useDesignMode() {
  * returns nothing, and the ghosts are simply not drawn. Reading by offset
  * would have printed the field that happened to be there instead, which is
  * the failure this exists to make impossible.
+ *
+ * Split into a pure half and a client-bound half so the pure half can be
+ * tested — this mechanism is what every optional readout on the panel rests
+ * on, and it had no test at all.
  */
 function layoutOf(id) {
   if (!hasStream(id)) return { names: [], stride: 0, index: {} };
-  const meta = getClient().stream(id).meta || {};
-  const names = String(meta.layout || '')
-    .split(',')
-    .map((n) => n.trim())
-    .filter(Boolean);
-  return { names, stride: names.length, index: Object.fromEntries(names.map((n, i) => [n, i])) };
+  return parseLayout((getClient().stream(id).meta || {}).layout);
 }
 
 // ---------------------------------------------------------------------------
+// Which controls an object has// ---------------------------------------------------------------------------
 // Which controls an object has
 // ---------------------------------------------------------------------------
 
@@ -151,10 +165,34 @@ export function useObjectTable() {
   const { manifest } = useNoobVstWebguiFramework();
   return computed(() => {
     const list = manifest.value?.meta?.objects;
-    if (!Array.isArray(list) || !list.length) return null;
-    return Object.fromEntries(list.map((o) => [o.id, o]));
+    return Array.isArray(list) && list.length ? list : null;
   });
 }
+
+/**
+ * The published entry for the object that is loaded, or `null`.
+ *
+ * **Looked up by index, because `id` on the wire is the index.** A saved
+ * project loads an object by its position, so that is what identifies one —
+ * and keying this by the catalogue's string id instead silently matched
+ * nothing, which would have greyed no control at all the moment a real
+ * plug-in connected while looking perfectly fine against the design manifest.
+ */
+export function useObjectMeta() {
+  const r = useRes();
+  const table = useObjectTable();
+  return computed(() => {
+    const list = table.value;
+    if (!list) return null;
+    const i = r.type ? r.type.index : 2;
+    return list.find((o) => o.id === i) || list[i] || null;
+  });
+}
+
+/** What choosing this object pins, as the engine publishes it. A Tube's far end is open by definition. */
+export const forcesOf = (meta) => (meta && meta.forces) || null;
+/** The engine's own note about this object, where it has one. */
+export const noteOf = (meta) => (meta && meta.note) || '';
 
 /**
  * Why an object has nothing for a control to act on.
@@ -175,7 +213,27 @@ const WHY = {
     short: 'nothing left to open',
     why: 'Opening is the reflection at the far end of an air column, from closed to open. A solid has no far end, and a tube is already open at both — it is at one extreme of this control by definition.',
   },
-  modes: {
+  select: {
+    short: 'nothing to choose between',
+    why: 'Selection decides which of an object’s partials a limited bank of resonators runs. A waveguide has no such budget — every resonance under Nyquist falls out of one delay loop at one cost — so there is nothing being left out and nothing to choose.',
+  },
+  material: {
+    short: 'the loop sets its own loss',
+    why: 'Material is the exponent of a mode bank’s damping law, applied per resonator. An air column loses its highs to the walls and out of the open end instead, which the loop’s own reflection filter accounts for; Radius is the control that moves it.',
+  },
+  damp_corner: {
+    short: 'mode-bank damping only',
+    why: 'The second half of the mode bank’s two-parameter loss law: where the extra damping starts. An air column’s loss is a property of its loop, not of a per-mode law.',
+  },
+  damp_hi: {
+    short: 'mode-bank damping only',
+    why: 'How steeply the extra damping bites above its corner. Part of the same per-mode law an air column does not have.',
+  },
+  tail: {
+    short: 'mode-bank only',
+    why: 'The tail is what a bank of resonators is left ringing with. A delay loop rings on its own terms.',
+  },
+  mode_budget: {
     short: 'one loop gives them all',
     why: 'A waveguide’s partials are the resonances of a single delay loop, so every one under Nyquist comes out of it at the same cost whether or not anybody counts them. There is no budget here to spend.',
   },
@@ -200,10 +258,8 @@ const WHY = {
  * the object is the fallback — which is a labelling choice rather than a
  * physical claim, so it is safe to make here.
  */
-export function coordsOf(object, table) {
-  const published = table?.[object.id]?.coords;
-  if (published) return published;
-  return object.twoD ? 'xy' : 'line';
+export function coordsOf(object, meta) {
+  return meta?.coords || (object.twoD ? 'xy' : 'line');
 }
 
 /**
@@ -234,11 +290,9 @@ export function contactAxes(coords) {
 }
 
 /** Whether this object uses this control, and if not, why not. `null` when it is live. */
-export function inactive(id, object, table) {
-  if (!table) return null;
-  const entry = table[object.id];
-  if (!entry || !Array.isArray(entry.uses)) return null;
-  if (entry.uses.includes(id)) return null;
+export function inactive(id, object, meta) {
+  if (!meta || !Array.isArray(meta.uses)) return null;
+  if (meta.uses.includes(id)) return null;
   return WHY[id] || { short: 'not used by this object', why: `The engine does not read ${id} for a ${object.label}.` };
 }
 
@@ -285,23 +339,71 @@ export function useOverrides() {
   const write = (list) => {
     stored.value = list.length ? { edits: list } : null;
   };
+  /**
+   * A mode's key.
+   *
+   * **A pair, because a surface's modes need one.** Two different modes of a
+   * rectangle routinely share their first index — `(2,1)` and `(2,3)` are
+   * different shapes at different frequencies — so keying an override on `i`
+   * alone would silently apply one edit to several resonances. On an object
+   * with a single index `j` is 0 and the key degrades to the number.
+   *
+   * **The page never invents this identity, it copies it.** Both halves come
+   * straight out of the `modes` frame and go back unchanged, so whatever the
+   * engine means by them, the round trip is exact.
+   */
+  const keyOf = (i, j) => `${i}:${j || 0}`;
+  const same = (e, i, j) => e.i === i && (e.j || 0) === (j || 0);
   return reactive({
     edits,
     count: computed(() => edits.value.length),
-    byIndex: computed(() => new Map(edits.value.map((e) => [e.i, e]))),
-    /** One partial's override, merged over whatever it had. A neutral result removes the entry. */
-    set(i, patch) {
-      const next = edits.value.filter((e) => e.i !== i);
-      const merged = { ...(edits.value.find((e) => e.i === i) || { i }), ...patch, i };
+    byIndex: computed(() => new Map(edits.value.map((e) => [keyOf(e.i, e.j), e]))),
+    keyOf,
+    /** Whether this mode has an override. */
+    has(i, j) {
+      return edits.value.some((e) => same(e, i, j));
+    },
+    get(i, j) {
+      return edits.value.find((e) => same(e, i, j)) || null;
+    },
+    /** One mode's override, merged over whatever it had. A neutral result removes the entry. */
+    set(i, j, patch) {
+      const next = edits.value.filter((e) => !same(e, i, j));
+      const merged = { ...(edits.value.find((e) => same(e, i, j)) || {}), ...patch, i, j: j || 0 };
       if (merged.cents != null) merged.cents = clamp(merged.cents, -EDIT_LIMITS.cents, EDIT_LIMITS.cents);
       if (merged.db != null) merged.db = clamp(merged.db, -EDIT_LIMITS.db, EDIT_LIMITS.db);
       if (merged.decay != null) merged.decay = clamp(merged.decay, EDIT_LIMITS.decayMin, EDIT_LIMITS.decayMax);
       if (!neutral(merged)) next.push(merged);
-      next.sort((a, b) => a.i - b.i);
+      next.sort((a, b) => a.i - b.i || (a.j || 0) - (b.j || 0));
       write(next);
     },
-    clear(i) {
-      write(edits.value.filter((e) => e.i !== i));
+    /**
+     * Many modes at once, as one write.
+     *
+     * A drag across the display touches dozens of partials, and writing the
+     * store once per partial would send the whole table dozens of times a
+     * second. The gesture collects and commits once — which is also what
+     * makes it one thing to undo by Reset rather than sixty-four.
+     *
+     * Each entry is `{ i, j, ...patch }`, merged over whatever that mode had,
+     * and a patch that leaves a mode neutral removes it.
+     */
+    setMany(list) {
+      if (!list.length) return;
+      const byKey = new Map(edits.value.map((e) => [keyOf(e.i, e.j), { ...e }]));
+      for (const { i, j, ...patch } of list) {
+        const k = keyOf(i, j);
+        const merged = { ...(byKey.get(k) || {}), ...patch, i, j: j || 0 };
+        if (merged.cents != null) merged.cents = clamp(merged.cents, -EDIT_LIMITS.cents, EDIT_LIMITS.cents);
+        if (merged.db != null) merged.db = clamp(merged.db, -EDIT_LIMITS.db, EDIT_LIMITS.db);
+        if (merged.decay != null) merged.decay = clamp(merged.decay, EDIT_LIMITS.decayMin, EDIT_LIMITS.decayMax);
+        if (neutral(merged)) byKey.delete(k);
+        else byKey.set(k, merged);
+      }
+      write([...byKey.values()].sort((a, b) => a.i - b.i || (a.j || 0) - (b.j || 0)));
+    },
+    clear(i, j) {
+      write(edits.value.filter((e) => !same(e, i, j)));
     },
     clearAll() {
       write([]);
@@ -354,12 +456,7 @@ export function useInfo() {
   const has = hasStream('info');
   const frame = has ? useStreamFrame('info') : { value: null };
   const layout = has ? layoutOf('info') : { index: {} };
-  const at = (name) =>
-    computed(() => {
-      const i = layout.index[name];
-      const f = frame.value;
-      return i == null || !f || !Number.isFinite(f[i]) ? null : f[i];
-    });
+  const at = (name) => computed(() => fieldAt(frame.value, layout, name));
   return reactive({
     has,
     live: computed(() => frame.value != null),
@@ -422,7 +519,16 @@ export function useModes() {
       if (!(hz > 0)) break;
       const get = (name) => (at[name] == null ? null : f[o + at[name]]);
       out.push({
+        /** Position in the frame — for drawing order and nothing else. */
+        row: out.length,
+        /** The mode's own identity, copied verbatim and written back verbatim. */
         i: at.i == null ? out.length : Math.round(f[o + at.i]),
+        /**
+         * The mode's second index — nodal circles on a disc, the second
+         * rectangle index on a surface. Zero on an object that has only one,
+         * which is how the panel knows not to print a pair.
+         */
+        j: at.j == null ? 0 : Math.round(f[o + at.j]),
         hz,
         baseHz: get('base_hz'),
         bareDb: get('db_bare'),
@@ -492,6 +598,21 @@ export function useMeter() {
   });
 }
 
+/**
+ * The stiff-string coefficient `B`, in the form it is published in.
+ *
+ * Inharm as a percentage says nothing about what the device is doing. `B` is
+ * the quantity Fletcher's stiff-string relation is actually written in and
+ * the one a reader can look up, so the face prints that instead — the same
+ * rule that put Decay in seconds and Bright in decibels per octave.
+ */
+export function stiffnessText(b) {
+  if (b == null || !Number.isFinite(b) || b === 0) return null;
+  const e = Math.floor(Math.log10(Math.abs(b)));
+  const m = b / 10 ** e;
+  return `B ${m.toFixed(1)}e${e}`;
+}
+
 /** A linear peak as decibels, floored so silence does not go to negative infinity. */
 export const linToDb = (v) => (v > 0 ? 20 * Math.log10(v) : -120);
 
@@ -529,7 +650,12 @@ export function useFundamental() {
  * which would be audible, would push entries onto the undo history and would
  * fight automation on that parameter.
  */
-export const ui = reactive({ browsing: false });
+export const ui = reactive({
+  /** The object browser is up. */
+  browsing: false,
+  /** The preset browser is up. Only ever one of the two: they are both whole-page layers. */
+  presets: false,
+});
 
 /** Whether the bench panel is shown. Off by default: everything this panel has to say is already on its face. */
 export function useDebug() {
@@ -555,6 +681,19 @@ export function lengthText(m) {
   if (m < 1) return `${(m * 100).toFixed(1)} cm`;
   return `${m.toFixed(2)} m`;
 }
+
+/**
+ * A mode's own name, when it has two indices: `(3, 2)` is three nodal
+ * diameters and two nodal circles on a disc, or the two rectangle indices on
+ * a surface. `null` on an object whose partials are just numbered.
+ *
+ * It is worth printing because on a dense two-dimensional series "partial 14"
+ * says nothing and "(3, 2)" says exactly which shape is ringing.
+ */
+export const modeName = (p) => (p && p.j > 0 ? `(${p.i}, ${p.j})` : null);
+
+/** How to refer to one partial in prose: a mode pair on a surface, a partial number otherwise. */
+export const partialName = (p) => (!p ? '' : p.j > 0 ? `Mode ${modeName(p)}` : `Partial ${p.i}`);
 
 /** `4.2 s`, `250 ms` — a ring time in the unit it is comfortable in. */
 export function timeText(s) {

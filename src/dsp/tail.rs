@@ -57,8 +57,13 @@ use crate::dsp::filters::{OnePole, Svf};
 pub const LINES: usize = 8;
 /// Bands the residual energy is measured and fitted in.
 pub const BANDS: usize = 32;
-/// Longest line, in samples: the base lengths at 192 kHz.
+/// Longest line, in samples: the base lengths at 192 kHz. A power of two, so
+/// the circular buffers wrap with a mask rather than a division — see the note
+/// on [`crate::dsp::guide`]'s rails, which measured what that is worth.
 const MAX_LINE: usize = 16384;
+
+/// The mask that wraps an index into [`MAX_LINE`].
+const LINE_MASK: usize = MAX_LINE - 1;
 
 /// Base line lengths at 48 kHz, in samples.
 ///
@@ -94,13 +99,13 @@ impl Line {
 
     #[inline]
     fn read(&self) -> f32 {
-        self.buf[(self.w + self.buf.len() - self.len) % self.buf.len()]
+        self.buf[(self.w + MAX_LINE - self.len) & LINE_MASK]
     }
 
     #[inline]
     fn write(&mut self, x: f32) {
         self.buf[self.w] = x;
-        self.w = (self.w + 1) % self.buf.len();
+        self.w = (self.w + 1) & LINE_MASK;
     }
 }
 
