@@ -8,18 +8,29 @@
  * keys could not show that. What is left is the statement — this is what you
  * have, this is which engine it is, and this is where its numbers come from.
  *
- * **The source line is not decoration.** Seven of the eight series are the
- * solution of a stated closed form and `test/modes.test.js` solves each one
- * from scratch. The marimba is the exception and is marked as one, in the
- * warning colour, as a tuning target: an undercut bar is arrived at by
- * cutting until the partials land, and no bare equation gives them.
+ * **The source line is not decoration.** Nine of the ten series are the
+ * solution of a stated closed form, and the numbers on the display come off
+ * the engine that solved them. The marimba is the exception and is marked as
+ * one, in the warning colour, as a tuning target: an undercut bar is arrived
+ * at by cutting until the partials land, and no bare equation gives them.
  */
 import { computed } from 'vue';
-import { forcesOf, noteOf, ui, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
+import { forcesOf, noteOf, ui, useMetaDrift, useObject, useObjectMeta, useRes } from '../composables/useResonator.js';
 
 const r = useRes();
 const object = useObject();
 const meta = useObjectMeta();
+
+/**
+ * Controls the engine's object table names that this build does not publish.
+ *
+ * Printed rather than swallowed. While this says anything at all the panel
+ * greys nothing out, because a list that names a control which does not exist
+ * cannot be trusted about the controls that do — and the alternative, which
+ * happened, is the device's headline knob quietly dead in the host and alive
+ * everywhere it was tested.
+ */
+const drift = useMetaDrift();
 
 /**
  * What the cited equation does not currently describe.
@@ -84,6 +95,10 @@ const caveat = computed(() => {
         </p>
         <p v-if="noteOf(meta)" class="pick__src pick__note">{{ noteOf(meta) }}</p>
         <p v-if="caveat" class="pick__src pick__caveat">{{ caveat }}</p>
+        <p v-if="drift.length" class="pick__src pick__caveat">
+          The engine’s object table names {{ drift.length === 1 ? 'a control' : 'controls' }} this build does not
+          publish — {{ drift.join(', ') }} — so it is out of date and nothing on this panel is greyed out from it.
+        </p>
       </div>
     </div>
   </section>

@@ -1,28 +1,32 @@
 /**
- * The design-mode physics, held to its own equations.
+ * The design-mode physics, and the engine's own series table, held to
+ * published values.
  *
- * **This does not test the plug-in.** The mathematics that ships belongs to
- * the Rust engine, and the engine's own tests guard it. What this guards is
- * `src/dev/physics/` — the equations the page uses to fill its three streams
- * before a plug-in is running, so that the panel can be built and looked at.
- * If they drift, the thing anybody looks at while designing is wrong.
+ * **Half of this now tests the engine rather than the page, and that is the
+ * point.** The series come off `benchmark --dump series` into
+ * `src/dev/series-table.js`, so the ratios asserted here are the numbers the
+ * audio thread runs — and they are checked against their *defining equations*
+ * and against the literature, never against the code that produced them. A
+ * test that asserts a model reproduces its own output is the bug rather than
+ * the evidence, so the beam's table is fed back through `cos β · cosh β = 1`
+ * and the drum head's through the Bessel integral, both of which are
+ * independent of anything the engine did.
  *
- * **Two results in here are worth more than that**, and both came out of
- * writing these tests rather than out of reading a source:
+ * The rest guards `src/dev/physics/` — the mode shapes and the two one-line
+ * laws the page still applies over that table, so that a page opened with no
+ * plug-in running is not quietly wrong.
+ *
+ * **Two results in here came out of writing these tests** rather than out of
+ * reading a source:
  *
  * * The beam ratio quoted everywhere as 2.756 is a **truncation** of 2.75654,
- *   not a rounding of it — correctly rounded it is 2.757. Computing it rather
- *   than quoting it is the only way that stays true.
+ *   not a rounding of it — correctly rounded it is 2.757.
  * * An undercut bar has **no closed form**. Its ratios are a maker's tuning
  *   target, and the two published values for its third partial are a
  *   builder's choice rather than a discrepancy to average away.
  *
- * Both belong in the engine's tests, where they will guard the numbers that
- * actually ship. They are kept here until they are carried across.
- *
  * It deliberately asserts nothing about amplitudes: those are invented until
- * the engine publishes them, and a test that checked the model against itself
- * would be the bug rather than the evidence.
+ * the engine publishes them.
  *
  *   npm test
  */
@@ -30,24 +34,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   barRatios,
-  beamEigenvalues,
-  beamRatios,
   beamShape,
   besselJ,
-  besselZeros,
-  circleModes,
+  inharmB,
+  modeIndices,
   ratiosOf,
   columnLength,
   guideRatios,
   nodeWeight,
   rectModes,
   stretch,
+  tableOf,
+  tineShape,
   BAR_SECOND,
   BAR_THIRD,
   C_AIR,
+  INHARM_B_MAX,
+  SHAPELESS,
 } from '../src/dev/physics/resonators.js';
 import { OBJECTS } from '../src/objects.js';
 import {
+  allPartialsCounted,
   ceilingHz,
   computePartials,
   dampExponent,
@@ -57,6 +64,29 @@ import {
   loudest,
   PUBLISHED,
 } from '../src/dev/physics/model.js';
+
+/** The ratios of one object's series, off the engine's table. */
+const series = (id) => tableOf(id).map((m) => m[2]);
+
+/**
+ * `βₙL` recovered from a bar's ratios: frequencies go as `(βₙ/β₁)²`, so the
+ * eigenvalue is `β₁√rₙ` and the published first root is all that is needed.
+ * This is what lets the engine's table be fed back through the equation that
+ * defines it.
+ */
+/**
+ * How far a residual may sit from zero before it means something.
+ *
+ * The engine's ratios reach this page through single precision, so a root
+ * recovered from one is good to about seven figures and the residual it leaves
+ * is around 1e-7 however exactly the engine solved. That is a property of the
+ * wire rather than of the mathematics — and it is still four orders tighter
+ * than a wrong root, which leaves a residual of order one.
+ */
+const WIRE = 1e-5;
+const BEAM_BETA1 = 4.730040744862704;
+const TINE_BETA1 = 1.8751040687119413;
+const J01 = 2.404825557695773;
 
 const close = (a, b, eps, what) =>
   assert.ok(Math.abs(a - b) <= eps, `${what}: ${a} is not within ${eps} of ${b}`);
@@ -86,40 +116,61 @@ function zeros(f, steps = 4000) {
 
 // ---------------------------------------------------------------------------
 
-test('the beam eigenvalues really do solve cos x · cosh x = 1', () => {
-  for (const x of beamEigenvalues(8)) {
-    // Checked in the form that does not overflow: cos x = sech x.
-    close(Math.cos(x), 1 / Math.cosh(x), 1e-12, `residual at x = ${x}`);
+test('the engine’s beam ratios solve cos β · cosh β = 1', () => {
+  // **This tests the engine, not the page.** The ratios come off
+  // `benchmark --dump series`; turning each back into its eigenvalue and
+  // substituting it into the equation that defines it is a check that owes
+  // nothing to the code that produced them. Checked in the form that does not
+  // overflow: cos β = sech β.
+  for (const r of series('beam').slice(0, 12)) {
+    const b = BEAM_BETA1 * Math.sqrt(r);
+    close(Math.cos(b), 1 / Math.cosh(b), WIRE, `residual at β = ${b}`);
   }
 });
 
-test('and they are the values the literature gives', () => {
-  const e = beamEigenvalues(4);
-  const want = [4.730041, 7.853205, 10.995608, 14.137165];
-  want.forEach((w, i) => close(e[i], w, 5e-6, `eigenvalue ${i + 1}`));
+test('and they are the ratios the literature gives', () => {
+  // Leissa, NASA SP-160, Table 4.23, as ratios of the fundamental.
+  const r = series('beam');
+  [1, 2.756538507, 5.403917632, 8.932950352].forEach((w, i) => close(r[i], w, 1e-5, `beam partial ${i + 1}`));
 });
 
-test('the beam ratios the panel prints come out of those eigenvalues', () => {
-  // Frequencies go as the square of the eigenvalue, so these follow from the
-  // roots above and nothing else.
-  const r = beamRatios(4);
-  [1, 2.756538507, 5.403917632, 8.932950352].forEach((w, i) => close(r[i], w, 1e-9, `beam partial ${i + 1}`));
+test('the engine’s tine ratios solve cos β · cosh β = −1, and are the cantilever’s', () => {
+  for (const r of series('tine').slice(0, 8)) {
+    const b = TINE_BETA1 * Math.sqrt(r);
+    // −sech β, the same rearrangement with the sign the clamped end puts on it.
+    close(Math.cos(b), -1 / Math.cosh(b), WIRE, `residual at β = ${b}`);
+  }
+  // Leissa, Table 4.39. A cantilever's first overtone is at 6.27 where a free
+  // bar's is at 2.76, which is the whole reason a tine is not a glockenspiel.
+  const r = series('tine');
+  [1, 6.2669, 17.5475, 34.3861].forEach((w, i) => close(r[i], w, 1e-3, `tine partial ${i + 1}`));
+});
+
+test('the engine’s clamped disc is the published one', () => {
+  // Leissa §2.1 / Rossing: a disc clamped at its rim rings at
+  // 1 : 2.08 : 3.41 : 3.89 : 5.00 — far wider than the round head's
+  // 1 : 1.59 : 2.14, because a stiff plate goes as λ² where a tensioned
+  // membrane goes as λ.
+  const r = series('plate_round');
+  [1, 2.08, 3.41, 3.89, 5.0].forEach((w, i) => close(r[i], w, 5e-3, `plate_round partial ${i + 1}`));
+  const head = series('membrane_round');
+  assert.ok(r[1] > head[1] + 0.4, 'a stiff disc spreads wider than a tensioned one');
 });
 
 test('the second partial is 2.7565, and the usual 2.756 is a truncation of it', () => {
   // Worth pinning, because "1 : 2.756 : 5.404 : 8.933" is quoted everywhere
   // and only two of those three are correctly rounded. The exact value is
-  // 2.75654, which rounds to 2.757. The panel prints what the solver gives
+  // 2.75654, which rounds to 2.757. The panel prints what the engine solved
   // rather than the quotation, which is why this test exists.
-  const r = beamRatios(4);
+  const r = series('beam');
   close(Number(r[1].toFixed(4)), 2.7565, 1e-9, 'four places');
   assert.equal(Number(r[1].toFixed(3)), 2.757, 'three places, correctly rounded');
   assert.notEqual(Number(r[1].toFixed(3)), 2.756, 'the quoted figure is not the rounded one');
 });
 
 test('a free–free beam mode has one more node than its index', () => {
-  const e = beamEigenvalues(6);
-  e.forEach((x, i) => {
+  series('beam').slice(0, 6).forEach((r, i) => {
+    const x = BEAM_BETA1 * Math.sqrt(r);
     const n = zeros((u) => beamShape(x, u)).length;
     assert.equal(n, i + 2, `mode ${i + 1} should have ${i + 2} nodes, found ${n}`);
   });
@@ -128,15 +179,37 @@ test('a free–free beam mode has one more node than its index', () => {
 test('the first mode’s nodes are where a marimba bar’s cord goes', () => {
   // 0.2242 and 0.7758 of the length: the two points the fundamental does not
   // move, which is why a bar hung there keeps ringing.
-  const [x] = beamEigenvalues(1);
-  const n = zeros((u) => beamShape(x, u));
+  const n = zeros((u) => beamShape(BEAM_BETA1, u));
   close(n[0], 0.2242, 5e-4, 'lower node');
   close(n[1], 0.7758, 5e-4, 'upper node');
 });
 
+test('a clamped bar is held at one end and free at the other, exactly', () => {
+  // Both clamped conditions fall out of the rearranged form rather than being
+  // imposed, so getting them for free is the check that the rearrangement did
+  // not change the function.
+  for (const r of series('tine').slice(0, 6)) {
+    const x = TINE_BETA1 * Math.sqrt(r);
+    close(tineShape(x, 0), 0, 1e-9, `clamped end, β = ${x}`);
+    // Zero *and* flat there, which is a double zero: the shape leaves the
+    // clamp as u² rather than as u, so a hundredth of the way along it is
+    // still four orders below the free end. Asserted as the value rather than
+    // as a finite-difference slope, which only measures the step size.
+    assert.ok(
+      Math.abs(tineShape(x, 1e-4)) < 1e-5,
+      `the clamped end should be a double zero, β = ${x}, got ${tineShape(x, 1e-4)}`,
+    );
+    assert.ok(Math.abs(tineShape(x, 1)) > 1, 'and the far end is free to move');
+  }
+  // Which is what the contact control does with it: strike the clamp and
+  // nothing comes out.
+  close(nodeWeight('tine', 0, 0), 0, 1e-9, 'a tine struck at its clamp');
+  assert.ok(nodeWeight('tine', 0, 1) > 0.9, 'and struck at its tip');
+});
+
 test('the beam mode shape survives the high modes it is asked for', () => {
   // The naive form is the difference of two numbers around 1e19 by mode 20.
-  const e = beamEigenvalues(48);
+  const e = series('beam').map((r) => BEAM_BETA1 * Math.sqrt(r));
   for (const x of e) {
     for (let i = 0; i <= 32; i++) {
       const v = beamShape(x, i / 32);
@@ -171,7 +244,7 @@ test('a tuned bar puts partials 2 and 3 where the maker chose, and is a beam abo
   for (let i = 1; i < r.length; i++) assert.ok(r[i] > r[i - 1], `partial ${i + 1} must be above ${i}`);
   // The whole point of the undercut: partial 2 lands on a whole ratio where
   // the untouched bar had it at 2.7565.
-  assert.ok(beamRatios(2)[1] < r[1], 'the undercut raises partial 2 relative to the fundamental');
+  assert.ok(series('beam')[1] < r[1], 'the undercut raises partial 2 relative to the fundamental');
 });
 
 test('both builder’s choices are honoured rather than averaged', () => {
@@ -207,49 +280,119 @@ test('the Bessel integral gives the values it should', () => {
   close(besselJ(0, 30), -0.086367983581, 1e-11, 'J₀(30)');
 });
 
-test('the circular membrane’s zeros really are zeros', () => {
-  for (let m = 0; m <= 4; m++) {
-    for (const z of besselZeros(m, 5)) close(besselJ(m, z), 0, 1e-11, `J${m}(${z})`);
+test('every ratio the engine gives for a drum head really is a Bessel zero', () => {
+  // **The engine again, checked against the definition.** A round head's
+  // ratios are `j_{mn}/j₀₁`, so multiplying each by `j₀₁` must land on a zero
+  // of the Bessel function whose order the table names — evaluated here by
+  // Simpson on the integral form, which shares no code with whatever the
+  // engine did.
+  for (const [m, , r] of tableOf('membrane_round').slice(0, 24)) {
+    close(besselJ(m, J01 * r), 0, WIRE, `J${m} at ratio ${r}`);
   }
 });
 
-test('and they are the values the tables give', () => {
-  const j0 = besselZeros(0, 3);
-  [2.404826, 5.520078, 8.653728].forEach((w, i) => close(j0[i], w, 1e-6, `j₀,${i + 1}`));
-  const j1 = besselZeros(1, 2);
-  [3.831706, 7.015587].forEach((w, i) => close(j1[i], w, 1e-6, `j₁,${i + 1}`));
-});
-
-test('a drum head’s series is the sorted Bessel zeros, and it is not the rectangle’s', () => {
-  const got = circleModes(6).map((m) => m.ratio);
+test('a drum head’s series is the published one, and it is not the rectangle’s', () => {
+  const got = series('membrane_round');
   [1, 1.5933, 2.1355, 2.2954, 2.6531, 2.9173].forEach((w, i) => close(got[i], w, 5e-5, `partial ${i + 1}`));
   // The reason the eighth object exists: a circle is not a rectangle.
   const rect = rectModes(6, 1).map((m) => m.ratio);
   assert.ok(Math.abs(got[1] - rect[1]) > 0.01, 'a round head and a square one differ from the second partial on');
 });
 
+test('the page’s rectangle and the engine’s are the same rectangle', () => {
+  // The one series still solved on the page, because Ratio is a control and
+  // the engine's table is one aspect. At aspect 1 the two must agree exactly,
+  // and this is what would catch them drifting apart.
+  //
+  // **The membrane is compared over a prefix and the plate over all of it**,
+  // because `--dump series` takes its rows in index order rather than in
+  // frequency order: a membrane's walk spends five hundred rows on i = 1
+  // before it reaches i = 2, so the cap cuts it off with whole families
+  // missing from partial seventeen up. The plate's walk terminates on its own
+  // and is complete. Reported to res-engine; when the dump sorts before it
+  // takes, this prefix goes away.
+  const mem = series('membrane').slice(0, 16);
+  rectModes(mem.length, 1).forEach((m, i) => close(m.ratio, mem[i], 2e-5, `membrane partial ${i + 1}`));
+  const plate = series('plate');
+  rectModes(plate.length, 1).forEach((m, i) => close(m.ratio ** 2, plate[i], 2e-3, `plate partial ${i + 1}`));
+});
+
+test('the page’s air column is the engine’s delay loop, to within the loop’s own dispersion', () => {
+  // The page keeps the closed form because Opening has to sweep and the dump
+  // is one setting each. This is what holds the two together — and what
+  // records the gap, which is real: a delay loop with a filtered reflection is
+  // dispersive and an ideal pipe is not, so the engine's upper partials sit
+  // progressively sharp. A fraction of a cent at the bottom, a few cents by
+  // the fiftieth.
+  const cents = (a, b) => Math.abs(1200 * Math.log2(a / b));
+  for (const [id, opening] of [['pipe', 0], ['tube', 1]]) {
+    const engine = series(id);
+    const page = guideRatios(engine.length, opening);
+    engine.slice(0, 8).forEach((r, i) => {
+      assert.ok(cents(r, page[i]) < 1, `${id} partial ${i + 1}: ${cents(r, page[i]).toFixed(3)} cents apart`);
+    });
+    const top = engine.length - 1;
+    assert.ok(cents(engine[top], page[top]) < 10, `${id} stays within ten cents to the top of the dump`);
+  }
+});
+
+test('the mode indices come off the engine with the ratios', () => {
+  // An override addresses a mode by the name the audio thread calls it, so a
+  // page that numbered its own would edit the wrong partial and look right.
+  for (const id of ['beam', 'string', 'tine', 'membrane_round', 'plate_round']) {
+    const ix = modeIndices(id, 12);
+    const rows = tableOf(id).slice(0, 12);
+    ix.forEach((pair, k) => assert.deepEqual(pair, [rows[k][0], rows[k][1]], `${id} mode ${k}`));
+  }
+});
+
+test('the clamped disc has no mode shape here, and says so rather than pretending', () => {
+  // Its shape needs a modified Bessel function, which is the machinery this
+  // page stopped carrying. A dead control that looks alive is worse than a
+  // dead control that is labelled, so design mode weights every mode alike
+  // and SHAPELESS is what the panel prints from.
+  assert.ok(SHAPELESS.has('plate_round'));
+  for (const u of [0, 0.25, 0.5, 1]) close(nodeWeight('plate_round', 3, u), 1, 1e-12, `uniform at ${u}`);
+  // And no other object is quietly in that set.
+  for (const o of OBJECTS) {
+    if (o.id === 'plate_round') continue;
+    assert.ok(!SHAPELESS.has(o.id), `${o.id} should have a modelled shape`);
+  }
+});
+
 test('every mode of a drum head is a node at the rim, and only the round ones live at the centre', () => {
   const c = 'membrane_round';
-  for (let k = 0; k < 8; k++) close(nodeWeight(c, k, 1), 0, 1e-9, `partial ${k + 1} at the rim`);
+  for (let k = 0; k < 8; k++) close(nodeWeight(c, k, 1), 0, 1e-6, `partial ${k + 1} at the rim`);
   // The fundamental is circularly symmetric, so the centre is its antinode.
   close(nodeWeight(c, 0, 0), 1, 1e-9, 'the fundamental at the centre');
   // The second and third have a nodal diameter through the middle, which is
   // why striking a drum dead centre gives a duller, more pitched sound.
-  close(nodeWeight(c, 1, 0), 0, 1e-9, 'the second at the centre');
-  close(nodeWeight(c, 2, 0), 0, 1e-9, 'the third at the centre');
+  close(nodeWeight(c, 1, 0), 0, 1e-6, 'the second at the centre');
+  close(nodeWeight(c, 2, 0), 0, 1e-6, 'the third at the centre');
 });
 
 test('the object list is the frozen index order and is append-only', () => {
   // A saved project's object is its index, so nothing here may ever move.
-  // The first seven are Corpus's own order; the eighth is ours.
+  // The first seven are Corpus's own order; everything from the eighth is
+  // ours, and each was appended.
   assert.deepEqual(
     OBJECTS.map((t) => t.id),
-    ['beam', 'marimba', 'string', 'membrane', 'plate', 'pipe', 'tube', 'membrane_round'],
+    ['beam', 'marimba', 'string', 'membrane', 'plate', 'pipe', 'tube', 'membrane_round', 'tine', 'plate_round'],
   );
   assert.deepEqual(
     OBJECTS.map((t) => t.engine),
-    ['modal', 'modal', 'modal', 'modal', 'modal', 'waveguide', 'waveguide', 'modal'],
+    ['modal', 'modal', 'modal', 'modal', 'modal', 'waveguide', 'waveguide', 'modal', 'modal', 'modal'],
   );
+});
+
+test('every object in the catalogue has a series, and every series an object', () => {
+  // The check that went missing: the engine appended two objects and this
+  // catalogue had eight, so `objectAt` clamped and the face would have printed
+  // "Membrane Round" over a different object's partials.
+  for (const o of OBJECTS) {
+    assert.ok(tableOf(o.id).length > 0, `${o.id} has no series`);
+    assert.ok(o.blurb && o.source && o.uses, `${o.id} is missing its prose`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -329,15 +472,35 @@ test('an air column takes the strike position for the same reason a string does'
 
 // ---------------------------------------------------------------------------
 
-test('Inharm stretches the series without moving the fundamental or crossing partials', () => {
+test('Inharm is the stiff-string law, the engine’s, and it does not cross partials', () => {
   const base = ratiosOf('string', 12);
   for (const k of [-1, -0.4, 0.4, 1]) {
     const s = stretch(base, k);
-    close(s[0], 1, 1e-12, 'the fundamental stays put');
     for (let i = 1; i < s.length; i++) assert.ok(s[i] > s[i - 1], `partial ${i + 1} crossed under Inharm ${k}`);
     if (k > 0) assert.ok(s[11] > base[11], 'positive Inharm should stretch');
     if (k < 0) assert.ok(s[11] < base[11], 'negative Inharm should compress');
   }
+});
+
+test('and the fundamental moves with it, which is what the law says', () => {
+  // `fₙ = n·f₁·√(1 + Bn²)` scales the first partial too, by `√(1 + B)`. This
+  // page used to apply a log-axis stretch that pinned the fundamental instead
+  // and said plainly that it was not the stiff-string law. It was honest and
+  // it was still the wrong shape, because the engine's law is the real one.
+  const top = stretch([1], 1)[0];
+  close(top, Math.sqrt(1 + INHARM_B_MAX), 1e-12, 'the fundamental at full stretch');
+  const cents = 1200 * Math.log2(top);
+  assert.ok(cents > 2 && cents < 3, `about two and a half cents at the extreme, got ${cents}`);
+});
+
+test('the Inharm control is quadratic and signed, as the engine has it', () => {
+  // So the region a real string lives in — B around 3e-4 for a piano C4 — is
+  // where a knob can be put on it rather than in the first pixel.
+  close(inharmB(0), 0, 1e-15, 'the middle');
+  close(inharmB(1), INHARM_B_MAX, 1e-15, 'the top');
+  close(inharmB(-1), -INHARM_B_MAX, 1e-15, 'the bottom');
+  close(inharmB(0.5), INHARM_B_MAX * 0.25, 1e-15, 'quadratic in the control');
+  close(inharmB(2), INHARM_B_MAX, 1e-15, 'clamped past the end');
 });
 
 // ---------------------------------------------------------------------------

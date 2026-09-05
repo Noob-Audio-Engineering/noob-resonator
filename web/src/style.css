@@ -310,6 +310,8 @@ body {
 .browse__src { font-size: 10px; color: var(--res-faint); }
 .browse__src b { letter-spacing: 0.06em; text-transform: uppercase; font-size: 9px; font-weight: 600; }
 .browse__src .target { color: var(--res-warn); }
+/* Where the row's own numbers came from, which is not the same claim as where the equation came from. */
+.browse__from { font-size: 9px; color: var(--res-dim); font-style: italic; }
 
 /* One preset per row: the same shape as an object row, so the eye does not
    have to re-find anything between the two views. */
@@ -486,7 +488,38 @@ body {
 .knob__cap { fill: #191d23; }
 .knob__crown { fill: none; stroke: rgb(255 255 255 / 0.07); stroke-width: 1; }
 .knob__index { fill: var(--res-brass); }
-.knob__label { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--res-dim); white-space: nowrap; }
+/*
+ * A control's name wraps rather than running into its neighbour.
+ *
+ * `Damp Corner` sets sixty-six pixels wide at nine, and the cell it sits in is
+ * fifty once the knob scale is down to 0.78 — so at 900 px the damping row read
+ * "INHARMDAMP CORNERHF SLOPE", three names with no gaps between them. **The
+ * label is the parameter's own name and the panel does not get to shorten it**,
+ * because that is the name the host prints in an automation lane and a face
+ * that disagrees with the lane is worse than a face that takes a second line.
+ *
+ * So it takes a second line, and every label in the deck and the strip reserves
+ * the room for one whether it needs it or not, so that a row of figures stays
+ * on a single baseline. Tighter tracking as well, which is what buys
+ * `Transpose` — one word, with nowhere to wrap — its two pixels back.
+ */
+.knob__label {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--res-dim);
+  white-space: normal;
+  line-height: 1.14;
+  text-align: center;
+}
+.deck .knob__label,
+.sel .knob__label {
+  letter-spacing: 0.02em;
+  min-height: 2.28em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
 .knob__value-text { font-size: 11px; color: var(--res-ink); white-space: nowrap; }
 .knob__hint {
   font-size: 8.5px; color: var(--res-faint); text-align: center; line-height: 1.25;

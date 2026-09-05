@@ -7,7 +7,7 @@ session scratchpad because a check that is lost is a check nobody runs.
 ## `physics_probe.py` — the partial series, from outside
 
 ```sh
-cargo run --release --bin benchmark -- --dump > series.csv
+cargo run --release --bin benchmark -- --dump series > series.csv
 python tools/physics_probe.py --compare series.csv
 ```
 
@@ -29,8 +29,25 @@ scratchpad at first for that reason, which confused location with dependence:
 sharing no line of code is what makes it a second opinion, and a scratchpad
 only makes it a second opinion nobody has after tonight.
 
-Worst disagreement to date: **0.0001 cents**, over some five thousand partials
-across the beam, the tine, the string, both membranes and the plate.
+The dump is `id,object,i,j,ratio` behind a header row: the object's index in
+the engine's own list, which is what the `type` parameter and every preset
+store, and the label the manifest publishes. It used to print the Rust variant
+name, which is the one identifier in the whole contract nothing else reads and
+we are free to rename — so anything keying off it was keying off the thing most
+likely to move. The probe now checks that each label arrives under one index
+and no more.
+
+Worst disagreement to date: **0.0001 cents** over some five thousand partials
+across the beam, the tine, the string, both membranes and both plates, and
+**0.53 cents** over the first sixteen partials of the stopped air column.
+
+The air columns are the one place a disagreement is expected, and the probe
+says so rather than hiding it. They are a delay loop with a third-order
+Lagrange fractional delay whose phase error grows with frequency, so agreement
+with an ideal `2n − 1` column is a band-limited claim: it is held to the same
+sixteen partials and the same one cent the benchmark publishes, and the drift
+above that — 2.7 cents by the fifty-third partial, near 12 kHz — is printed
+beside it as a measurement rather than asserted as a pass.
 
 ## `manifest_probe.mjs` — did the page ever connect?
 
@@ -63,7 +80,17 @@ outside a DAW.
 
 It reuses the browser already at `AppData\Local\ms-playwright` rather than
 downloading another, because the disk on this machine has been full once
-already.
+already. It finds that browser by looking for the newest
+`chromium_headless_shell-*` rather than by naming a build number, which would
+go stale the first time playwright updated.
+
+**It needs the playwright package as well as the browsers, and it is
+deliberately not a dependency of the page's build** — the whole point is that
+it comes at the built bundle from outside. `npm install --no-save playwright`
+anywhere and run the probe from there, or point `PLAYWRIGHT_DIR` at a
+directory whose `node_modules` has it. With neither, it says so and exits 2
+rather than throwing a module-resolution stack trace: a probe whose failure
+mode looks like a bug in the thing being probed is worse than no probe.
 
 ## What none of them can do
 

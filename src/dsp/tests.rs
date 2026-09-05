@@ -1346,10 +1346,62 @@ fn the_parameter_and_stream_contract_is_what_it_says_it_is() {
         let uses = o["uses"].as_array().unwrap();
         let guide = o["engine"] == "waveguide";
         let has = |k: &str| uses.iter().any(|u| u == k);
+        // **Every id named here must be a parameter this build publishes.**
+        // Without this the list and the panel can each be right about
+        // themselves and wrong about each other: `mode_budget` was published
+        // as `modes` here for a whole build, which would have greyed out the
+        // headline control on every object in the host while looking correct
+        // in design mode. Found by the panel agent, live. An assertion that
+        // the list contains a *particular* id cannot catch that — it agrees
+        // with the same mistake — so the check is that nothing in the list is
+        // unpublished.
+        for u in uses {
+            let id = u.as_str().expect("a used control is named by a string");
+            assert!(
+                specs.iter().any(|s| s.id == id),
+                "object `{}` says it uses `{id}`, which this build does not publish",
+                OBJECT_NAMES[i]
+            );
+        }
         // An air column has no mode list to truncate and no material.
-        assert_eq!(has("modes"), !guide);
+        assert_eq!(has("mode_budget"), !guide);
         assert_eq!(has("material"), !guide);
         assert_eq!(has("radius"), guide);
+        // And the contact coordinates the panel offers must be the ones the
+        // audio thread reads. `PlateRound` was published as `xy` while `Walk`
+        // and `Contacts::psi` read it as radius and angle, so the panel would
+        // have offered a square for an object whose corners land on the rim,
+        // where a clamped disc's every mode is zero.
+        //
+        // **This asserts against the walk, not against the same `matches!`.**
+        // Repeating the predicate here would agree with the mistake it is
+        // supposed to catch. What the engine actually does is observable: a
+        // polar object numbers its angular index from zero, because the
+        // axisymmetric family is real, and every other object starts at one;
+        // and only a two-dimensional object ever varies `j`.
+        if !guide {
+            let shape = Shape {
+                object: Object::ALL[i],
+                ..Shape::default()
+            };
+            let mut walk = Walk::new(shape, 8.0);
+            let first = walk.next().expect("an object has a fundamental");
+            let two_d = first.j != 0 || walk.any(|p| p.j != 0);
+            let want = if first.i == 0 {
+                "polar"
+            } else if two_d {
+                "xy"
+            } else {
+                "line"
+            };
+            assert_eq!(
+                o["coords"], want,
+                "`{}` publishes contact coordinates its own walk does not use",
+                OBJECT_NAMES[i]
+            );
+        } else {
+            assert_eq!(o["coords"], "line", "an air column is one-dimensional");
+        }
     }
     assert!(
         list[5]["uses"]
@@ -1876,34 +1928,218 @@ fn every_factory_preset_is_one_a_page_could_load() {
 }
 
 #[test]
-fn the_a_b_pair_differs_by_exactly_one_control() {
-    // The pair exists so a user meets the argument by accident rather than by
-    // reading about it, and that only works if the two are otherwise
-    // identical. If a later edit changes one of them, this says so.
+fn every_pair_differs_by_exactly_the_one_control_it_argues_about() {
+    // A pair exists so a user meets an argument by accident rather than by
+    // reading about it, and that only works if the two presets are otherwise
+    // identical: one changed control is the experiment, two is an anecdote.
+    // The browser finds them structurally, by looking for the two whose values
+    // differ in exactly one id, so a stray edit does not break the label — it
+    // stops the pair being found at all, quietly. This says so instead.
     let factory = preset::factory();
-    let a = factory
+    let by_name = |n: &str| {
+        factory
+            .iter()
+            .find(|p| p.name == n)
+            .unwrap_or_else(|| panic!("the factory set has no preset `{n}`"))
+    };
+    let pairs = [
+        ("A · Loudest Partials", "B · Lowest Partials", "select"),
+        ("Piano Wire", "Harp Wire", "inharm"),
+        ("Hammer at the Middle", "Hammer at a Seventh", "hit"),
+        ("Sloped Strike", "Flat Strike", "bright"),
+        ("Wood", "Bronze", "material"),
+        ("Stopped Pipe", "Open Pipe", "opening"),
+        ("Timpani", "Timpani, Bank Only", "tail"),
+    ];
+    for (a, b, id) in pairs {
+        let (x, y) = (by_name(a), by_name(b));
+        let (vx, vy) = (
+            preset::settings_values(&x.settings),
+            preset::settings_values(&y.settings),
+        );
+        let differ: Vec<&String> = vx
+            .iter()
+            .filter(|(k, v)| vy.get(*k) != Some(*v))
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(
+            differ,
+            vec![id],
+            "`{a}` and `{b}` should differ in `{id}` alone and differ in {differ:?}"
+        );
+        assert_eq!(x.group, y.group, "`{a}` and `{b}` are on different objects");
+        assert!(
+            x.modes.is_empty() && y.modes.is_empty(),
+            "`{a}` and `{b}` argue about a control, so neither may also move a partial"
+        );
+    }
+
+    // And no two presets share a name, because the browser addresses them by
+    // one and a duplicate would make one of them unreachable.
+    let mut names: Vec<&str> = factory.iter().map(|p| p.name).collect();
+    let total = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), total, "two factory presets share a name");
+
+    // **Now the other direction, which is the half that found a real bug.**
+    // Everything above checks that each pair I meant is one control apart. It
+    // cannot see a pair I did not mean, and the browser will label those too:
+    // running this scan the first time turned up three, one of which was two
+    // presets with identical values under different names — a duplicate, not
+    // a pair. A preset that turns up in two pairs also makes the label
+    // ambiguous, since the browser has no way to know which comparison was
+    // the intended one.
+    //
+    // This is the panel's own detection, run here: every unordered pair of
+    // presets whose values differ in exactly one id. The answer has to be the
+    // list above and nothing else.
+    let values: Vec<_> = factory
         .iter()
-        .find(|p| p.name.starts_with("A \u{b7}"))
-        .expect("the A preset");
-    let b = factory
-        .iter()
-        .find(|p| p.name.starts_with("B \u{b7}"))
-        .expect("the B preset");
-    let (va, vb) = (
-        preset::settings_values(&a.settings),
-        preset::settings_values(&b.settings),
-    );
-    let differ: Vec<&String> = va
-        .iter()
-        .filter(|(k, v)| vb.get(*k) != Some(*v))
-        .map(|(k, _)| k)
+        .map(|p| (p.name, preset::settings_values(&p.settings)))
         .collect();
+    let mut found: Vec<(&str, &str, String)> = Vec::new();
+    for (i, (na, va)) in values.iter().enumerate() {
+        for (nb, vb) in values.iter().skip(i + 1) {
+            let differ: Vec<&String> = va
+                .iter()
+                .filter(|(k, v)| vb.get(*k) != Some(*v))
+                .map(|(k, _)| k)
+                .collect();
+            assert!(
+                !differ.is_empty(),
+                "`{na}` and `{nb}` are the same preset under two names"
+            );
+            if let [only] = differ[..] {
+                found.push((na, nb, only.clone()));
+            }
+        }
+    }
+    let mut want: Vec<(&str, &str, String)> = pairs
+        .iter()
+        .map(|(a, b, id)| (*a, *b, (*id).to_string()))
+        .collect();
+    found.sort_unstable();
+    want.sort_unstable();
     assert_eq!(
-        differ,
-        vec!["select"],
-        "the pair should differ in `select` alone and differs in {differ:?}"
+        found, want,
+        "the structural scan finds a different set of pairs than the ones written down"
     );
-    assert!(a.modes.is_empty() && b.modes.is_empty());
+}
+
+#[test]
+fn the_figures_in_the_preset_prose_are_ones_this_engine_still_produces() {
+    // Every number a preset quotes was measured on this engine at that
+    // preset's own settings, and this holds the two together: the description
+    // has to contain the figure and the engine has to still produce it, so a
+    // change to either fails here rather than leaving a plausible sentence
+    // that stopped being true.
+    //
+    // **This does not prove any figure correct.** It is the engine checked
+    // against itself, which proves nothing about the physics; the physics is
+    // checked elsewhere in this file against Leissa, Lehtonen and Abramowitz
+    // and Stegun, and out of tree against a probe that has never seen this
+    // code. What this catches is prose going stale.
+    let factory = preset::factory();
+    let by_name = |n: &str| {
+        factory
+            .iter()
+            .find(|p| p.name == n)
+            .unwrap_or_else(|| panic!("the factory set has no preset `{n}`"))
+    };
+    let says = |name: &str, figure: &str| {
+        let p = by_name(name);
+        assert!(
+            p.description.contains(figure),
+            "`{name}` no longer says `{figure}`: {}",
+            p.description
+        );
+    };
+    let settle = |set: &Settings| {
+        let mut e = Resonator::new(SR);
+        e.configure(set);
+        let mut a = vec![0.0f32; bank::BLOCK];
+        let mut b = vec![0.0f32; bank::BLOCK];
+        for _ in 0..600 {
+            e.process(&mut a, &mut b);
+        }
+        e
+    };
+
+    // The tilt pair, which is the whole reason the default tilt is not zero.
+    for (name, mid, high) in [("Sloped Strike", 286usize, 0usize), ("Flat Strike", 0, 292)] {
+        let e = settle(&by_name(name).settings);
+        let info = e.bank().info();
+        let got_mid = info
+            .iter()
+            .filter(|i| i.hz > 1500.0 && i.hz < 10_000.0)
+            .count();
+        let got_high = info.iter().filter(|i| i.hz > 10_000.0).count();
+        assert_eq!(
+            got_mid, mid,
+            "`{name}` puts {got_mid} partials between 1.5 and 10 kHz"
+        );
+        assert_eq!(
+            got_high, high,
+            "`{name}` puts {got_high} partials above 10 kHz"
+        );
+    }
+    says("Sloped Strike", "286");
+    says("Flat Strike", "292");
+
+    // Lehtonen's stiff string: where the sixteenth partial lands.
+    let wire = by_name("Piano Wire");
+    let shape = Shape {
+        object: Object::String,
+        inharm_b: wire.settings.inharm_b(),
+        ..Shape::default()
+    };
+    let stretch = 1200.0 * (shape.ratio(16, 0) / 16.0).log2();
+    assert!(
+        (stretch - 64.0).abs() < 0.5,
+        "the sixteenth partial is {stretch:.1} cents sharp and the preset says 64"
+    );
+    says("Piano Wire", "64 cents");
+
+    // The two air columns at the same note: one exactly twice the other.
+    let mut lengths = Vec::new();
+    for name in ["Stopped Pipe", "Open Pipe"] {
+        lengths.push(settle(&by_name(name).settings).info_frame()[6]);
+    }
+    assert!(
+        (lengths[0] - 0.57).abs() < 0.005,
+        "the stopped column is {:.4} m and the preset says 0.57",
+        lengths[0]
+    );
+    assert!(
+        (lengths[1] - 1.14).abs() < 0.005,
+        "the open column is {:.4} m and the preset says 1.14",
+        lengths[1]
+    );
+    assert!(
+        (lengths[1] / lengths[0] - 2.0).abs() < 0.01,
+        "the open column should be twice the stopped one and is {:.4} times",
+        lengths[1] / lengths[0]
+    );
+    says("Stopped Pipe", "0.57 m");
+    says("Open Pipe", "1.14 m");
+
+    // The tail pair: where the head stops being resolvable, and how much
+    // energy the truncation left behind for the network to carry.
+    let f = settle(&by_name("Timpani").settings).info_frame();
+    assert!(
+        (f[2] - 1040.0).abs() < 20.0,
+        "the crossover is at {:.0} Hz and the pair says 1,040",
+        f[2]
+    );
+    assert!(
+        (f[3] + 26.6).abs() < 0.2,
+        "the tail sits at {:.1} dB and the pair says -26.6",
+        f[3]
+    );
+    says("Timpani, Bank Only", "1,040 Hz");
+    says("Timpani", "1,040 Hz");
+    says("Timpani", "-26.6 dB");
 }
 
 #[test]

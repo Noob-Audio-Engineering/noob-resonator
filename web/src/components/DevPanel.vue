@@ -67,10 +67,14 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
       <div class="bench__card">
         <h4 class="cap">Where these numbers come from</h4>
         <p v-if="designMode">
-          <b>Design mode.</b> No plug-in has answered, so the three streams below are being filled by the
-          page's own arithmetic in <code>src/dev/physics/</code> — the equations, so the panel has something
-          to draw before the engine exists. Every level in there is invented and no figure on this page may
-          be quoted. A production build contains none of that code.
+          <b>Design mode.</b> No plug-in has answered, so the four streams below are being filled by
+          <code>src/dev/physics/</code>, so that the panel has something to draw before the engine exists.
+          <b>Every level and every ring time in there is invented and no figure on this page may be
+          quoted.</b> The <em>ratios</em> are not invented: they are the engine's own, generated out of
+          <code>benchmark --dump series</code> into a table this directory reads, because two
+          implementations of the same eigenvalue problem is one more than this product should contain. The clamped disc's mode shape is not modelled here at all — it needs a
+          modified Bessel function, which is the machinery that just left — so Hit and the two pickups do
+          nothing on Plate Round until a plug-in answers. A production build contains none of this code.
         </p>
         <p v-else>
           <b>Live.</b> Every partial, level and ring time on this page came off the engine's streams. The
@@ -142,7 +146,7 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
             <tr><th>#</th><th>ratio</th><th>Hz</th><th>L dB</th><th>R dB</th><th>bare</th><th>rings</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="p in rows" :key="p.i" :class="{ edited: overrides.has(p.i, p.j) }">
+            <tr v-for="p in rows" :key="`${p.i}:${p.j || 0}`" :class="{ edited: overrides.has(p.i, p.j) }">
               <td>{{ p.j > 0 ? `${p.i},${p.j}` : p.i }}</td>
               <td>{{ ratioText(p.hz / fundamental.hz) }}</td>
               <td>{{ hzText(p.hz) }}</td>

@@ -162,7 +162,7 @@ The search for the best modes is spread across blocks with a bounded work budget
 | MembraneRound at 55 Hz, 4096 of 16384 partials | under a second | 0.045 s (17 blocks) | meets | ours; the budget is `select::WORK_PER_BLOCK` |
 | Tine at 55 Hz, 11 of 11 partials | under a second | 0.003 s (1 blocks) | meets | ours; the budget is `select::WORK_PER_BLOCK` |
 | PlateRound at 55 Hz, 421 of 421 partials | under a second | 0.003 s (1 blocks) | meets | ours; the budget is `select::WORK_PER_BLOCK` |
-| cost of one block while the search is running, worst case in the range | under a quarter of the block period | 0.459 ms against a 2.667 ms block — 17.2 % of it | meets | ours; this is what `select::WORK_PER_BLOCK` is chosen against |
+| cost of one block while the search is running, worst case in the range | under a quarter of the block period | 0.472 ms against a 2.667 ms block — 17.7 % of it | meets | ours; this is what `select::WORK_PER_BLOCK` is chosen against |
 
 ## What a mode costs
 
@@ -172,26 +172,26 @@ Timed on this machine, in a debug or release build depending on how the binary w
 
 | quantity | target or published | measured | verdict | source |
 |---|---|---|---|---|
-| 256 modes, stereo, block 128: the decrement kept separate | no published figure | 0.316 ns/mode/sample — 0.39 % of one core at 48 kHz | — | in-house |
-| 256 modes: what those two extra multiplies cost | no published figure | 0.240 ns folded against 0.316 ns split, +31.9 % | — | in-house; the accuracy they buy is in the decrement section above |
-| 1024 modes, stereo, block 128: the decrement kept separate | no published figure | 0.351 ns/mode/sample — 1.73 % of one core at 48 kHz | — | in-house |
-| 1024 modes: what those two extra multiplies cost | no published figure | 0.286 ns folded against 0.351 ns split, +22.7 % | — | in-house; the accuracy they buy is in the decrement section above |
-| 4096 modes, stereo, block 128: the decrement kept separate | no published figure | 0.362 ns/mode/sample — 7.13 % of one core at 48 kHz | — | in-house |
-| 4096 modes: what those two extra multiplies cost | no published figure | 0.278 ns folded against 0.362 ns split, +30.4 % | — | in-house; the accuracy they buy is in the decrement section above |
-| 1,024 modes at block 1 | no published figure | 1.152 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| 1,024 modes at block 4 | no published figure | 0.567 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| 1,024 modes at block 16 | no published figure | 0.398 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| 1,024 modes at block 64 | no published figure | 0.360 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| 1,024 modes at block 128 | no published figure | 0.356 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| 1,024 modes at block 256 | no published figure | 0.362 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
-| an air column at 55 Hz, 64 resonances published, stereo | no published figure | 35.687 ns/sample — 0.17 % of one core at 48 kHz, whatever number of harmonics come out | — | in-house; a delay loop costs its index arithmetic and its taps, not its partials |
-| how many partials a mode bank can afford for the price of the whole air column | no published figure | 96 partials | — | in-house. `MODAL.md`'s own loop broke even at about twelve, and the difference is              the contact combs: this one carries six fractional taps per sample — two reflections,              two injections and two pickups — where a bare loop carries one |
+| 256 modes, stereo, block 128: the decrement kept separate | no published figure | 0.323 ns/mode/sample — 0.40 % of one core at 48 kHz | — | in-house |
+| 256 modes: what those two extra multiplies cost | no published figure | 0.239 ns folded against 0.323 ns split, +35.4 % | — | in-house; the accuracy they buy is in the decrement section above |
+| 1024 modes, stereo, block 128: the decrement kept separate | no published figure | 0.383 ns/mode/sample — 1.88 % of one core at 48 kHz | — | in-house |
+| 1024 modes: what those two extra multiplies cost | no published figure | 0.299 ns folded against 0.383 ns split, +27.9 % | — | in-house; the accuracy they buy is in the decrement section above |
+| 4096 modes, stereo, block 128: the decrement kept separate | no published figure | 0.390 ns/mode/sample — 7.67 % of one core at 48 kHz | — | in-house |
+| 4096 modes: what those two extra multiplies cost | no published figure | 0.291 ns folded against 0.390 ns split, +33.9 % | — | in-house; the accuracy they buy is in the decrement section above |
+| 1,024 modes at block 1 | no published figure | 1.206 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| 1,024 modes at block 4 | no published figure | 0.597 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| 1,024 modes at block 16 | no published figure | 0.422 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| 1,024 modes at block 64 | no published figure | 0.364 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| 1,024 modes at block 128 | no published figure | 0.362 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| 1,024 modes at block 256 | no published figure | 0.355 ns/mode/sample | — | in-house; `MODAL.md` §4.2 measured per-sample processing at 8× the cost of block 128 |
+| an air column at 55 Hz, 64 resonances published, stereo | no published figure | 35.318 ns/sample — 0.17 % of one core at 48 kHz, whatever number of harmonics come out | — | in-house; a delay loop costs its index arithmetic and its taps, not its partials |
+| how many partials a mode bank can afford for the price of the whole air column | no published figure | 91 partials | — | in-house. `MODAL.md`'s own loop broke even at about twelve, and the difference is              the contact combs: this one carries six fractional taps per sample — two reflections,              two injections and two pickups — where a bare loop carries one |
 | and why that decides nothing on its own | no published figure | a bar has 28 partials and an inharmonic series, so no waveguide can represent it at any price;              an air column has hundreds and they are exactly harmonic, so no bank should have to | — | the two series, from `src/dsp/object.rs` and `src/dsp/guide.rs` |
-| the whole device, 256 modes on a membrane | no published figure | 0.503 ns/mode/sample — 0.62 % of one core at 48 kHz, tail and limiter included | — | in-house |
-| the whole device, 1024 modes on a membrane | no published figure | 0.371 ns/mode/sample — 1.82 % of one core at 48 kHz, tail and limiter included | — | in-house |
-| the whole device, 4096 modes on a membrane | no published figure | 0.382 ns/mode/sample — 7.51 % of one core at 48 kHz, tail and limiter included | — | in-house |
-| 1024 modes with the pitch oscillator off | no published figure | 0.396 ns/mode/sample | — | in-house; the published trick that makes a single resonator's retune free does not transfer to a bank, because every mode turns by a different angle |
-| 1024 modes with the pitch oscillator **on** | no published figure | 2.098 ns/mode/sample | — | in-house; the published trick that makes a single resonator's retune free does not transfer to a bank, because every mode turns by a different angle |
+| the whole device, 256 modes on a membrane | no published figure | 0.542 ns/mode/sample — 0.67 % of one core at 48 kHz, tail and limiter included | — | in-house |
+| the whole device, 1024 modes on a membrane | no published figure | 0.386 ns/mode/sample — 1.90 % of one core at 48 kHz, tail and limiter included | — | in-house |
+| the whole device, 4096 modes on a membrane | no published figure | 0.378 ns/mode/sample — 7.43 % of one core at 48 kHz, tail and limiter included | — | in-house |
+| 1024 modes with the pitch oscillator off | no published figure | 0.415 ns/mode/sample | — | in-house; the published trick that makes a single resonator's retune free does not transfer to a bank, because every mode turns by a different angle |
+| 1024 modes with the pitch oscillator **on** | no published figure | 2.165 ns/mode/sample | — | in-house; the published trick that makes a single resonator's retune free does not transfer to a bank, because every mode turns by a different angle |
 
 ## The out-of-tree probe
 

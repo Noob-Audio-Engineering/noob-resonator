@@ -68,6 +68,29 @@ export const SPREAD_CENTS = 35;
 const db = (a) => 20 * Math.log10(Math.max(1e-7, a));
 const clampDb = (v) => Math.max(DB_FLOOR, v);
 
+/** What the series generators need out of a state, in one place so two readers cannot differ. */
+const optsOf = (s) => ({ ratio: s.ratio, opening: s.opening, barSecond: s.barSecond, barThird: s.barThird });
+
+/**
+ * Whether the partial list is **all** of them, or merely all this stand-in
+ * has.
+ *
+ * The list stops for one of two reasons and they mean opposite things. Nyquist
+ * is a fact about the object at this pitch — above it there is nothing, and
+ * counting what is below is a real count. Running off the end of the
+ * design-mode series table is a fact about the table, and publishing that
+ * length as "the partials this object has" would be the false-ceiling bug
+ * again, in the one place where nobody would think to look for it.
+ *
+ * So the caller publishes the count only when this is true, and leaves the
+ * field unset otherwise — where the page already reads "not computed".
+ */
+export function allPartialsCounted(s) {
+  const base = ratiosOf(objectById(s.object).id, PAGE_MAX_PARTIALS, optsOf(s));
+  if (!base.length) return true;
+  return s.f0 * base[base.length - 1] > s.nyquist;
+}
+
 /**
  * Every partial the object has, before the mode budget decides which run.
  *
@@ -77,7 +100,7 @@ const clampDb = (v) => Math.max(DB_FLOOR, v);
 export function computePartials(s) {
   const o = objectById(s.object);
   const guide = o.engine === 'waveguide';
-  const opts = { ratio: s.ratio, opening: s.opening, barSecond: s.barSecond, barThird: s.barThird };
+  const opts = optsOf(s);
   // What the object *has* is a fact about the object: the mode budget is
   // applied afterwards, and running the two together is what once had the
   // panel name the wrong limit as a wall.

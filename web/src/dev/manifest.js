@@ -27,6 +27,7 @@ import { getClient } from '@noob-audio-engineering/noob-vst-webgui-framework/vue
 import { OBJECTS, objectAt } from '../objects.js';
 import {
   PUBLISHED,
+  allPartialsCounted,
   bankResponse,
   ceilingHz,
   columnFacts,
@@ -149,8 +150,23 @@ const BANK_ONLY = [
   'inharm', 'hit', 'pos_l', 'pos_r',
 ];
 
-const TWO_D = ['membrane', 'plate', 'membrane_round'];
+const TWO_D = ['membrane', 'plate', 'membrane_round', 'plate_round'];
 const HAS_ASPECT = ['membrane', 'plate'];
+
+/**
+ * The objects whose contact controls are a radius and an angle.
+ *
+ * Both discs, and for a while only one of them was: `object_meta()` mapped
+ * Membrane Round to `polar` while `Walk::new` and `Contacts::psi` read the
+ * clamped disc as polar too, so the published meta contradicted the audio
+ * thread. A panel mirroring it would have offered a user an X and a Y for an
+ * object the engine reads as a radius and an angle — and the engine's own
+ * comment is the argument against that: a square mapped into a circle puts
+ * the control's corners on the rim, where a clamped disc's every mode is
+ * exactly zero. Found by writing this table out beside theirs, and fixed on
+ * their side.
+ */
+const POLAR = ['membrane_round', 'plate_round'];
 
 function usesFor(o) {
   const uses = [...COMMON];
@@ -177,7 +193,7 @@ export const OBJECT_TABLE = OBJECTS.map((o, i) => ({
   engine: o.engine === 'waveguide' ? 'waveguide' : 'bank',
   forces: o.id === 'tube' ? { opening: 1.0 } : null,
   note: NOTES[o.id] || '',
-  coords: o.id === 'membrane_round' ? 'polar' : TWO_D.includes(o.id) ? 'xy' : 'line',
+  coords: POLAR.includes(o.id) ? 'polar' : TWO_D.includes(o.id) ? 'xy' : 'line',
   uses: usesFor(o),
 }));
 
@@ -370,7 +386,12 @@ function build() {
     if (i >= 0) info[i] = v;
   };
   put('modes_used', audible.length);
-  put('modes_available', available.length);
+  // **Only when it is a count rather than a table length.** The stand-in walks
+  // a generated series table, and where that runs out before Nyquist does the
+  // number it could publish would be the size of the table rather than
+  // anything about the object. Left unset, the panel reads "not computed" —
+  // which is true — instead of drawing a ceiling this file invented.
+  if (allPartialsCounted(s)) put('modes_available', available.length);
   put('crossover_hz', drawn.length > resolvable(s.object) ? drawn[resolvable(s.object)].hz : 0);
   put('column_m', facts.metres);
   put('loop_ms', facts.loopS * 1000);

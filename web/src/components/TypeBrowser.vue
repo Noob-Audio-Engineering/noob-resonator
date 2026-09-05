@@ -1,8 +1,9 @@
 <script setup>
 /**
  * The browse view: what this device can be, one object per row, grouped by
- * the engine that produces it. It replaces the panel while it is up, and the
- * top bar stays, so it is always clear what is loaded and where you are.
+ * the engine that produces it. It floats over the panel rather than replacing
+ * it, so the thing you are choosing *for* stays visible behind the thing you
+ * are choosing from.
  *
  * **Browsing does not touch the audio.** The object that is loaded keeps
  * ringing with its own settings the whole time this view is open: the `type`
@@ -20,14 +21,22 @@
  * visible before you commit.
  *
  * **The grouping is the honest one and it teaches the panel you are about to
- * meet.** Five objects are a mode bank, where the thing itself vibrates and
+ * meet.** Eight objects are a mode bank, where the thing itself vibrates and
  * every partial is one resonator paid for separately. Two are a waveguide,
  * where the object is only a boundary and the air inside rings, so one delay
  * loop gives every harmonic at once. Which engine you are on is why half the
  * deck is greyed when you get there.
+ *
+ * **Each row says where its own numbers came from**, and all ten of them are
+ * the engine's — the air columns included, measured off the running delay loop
+ * rather than assumed from the closed form the row cites. The label stays
+ * because "these are the engine's partials" and "these are the equation's
+ * partials" are not the same claim, and the day one row stops being the first
+ * the face should say so rather than the code quietly forgetting.
  */
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { ENGINES, OBJECTS } from '../objects.js';
+import { PREVIEW_SOURCE } from '../previews.js';
 import { ui, useObject, useRes } from '../composables/useResonator.js';
 import SeriesPreview from './SeriesPreview.vue';
 import EngineDiagram from './EngineDiagram.vue';
@@ -125,6 +134,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
               <span class="browse__uses"><b>Good for</b> {{ t.uses }}</span>
               <span class="browse__src">
                 <b :class="{ target: t.derivation === 'tuning target' }">{{ t.derivation }}</b> · {{ t.source }}
+              </span>
+              <span class="browse__from">
+                row drawn from {{ PREVIEW_SOURCE[t.id] === 'engine' ? 'the engine’s own partials' : 'the closed form above — a waveguide has no mode list to dump' }}
               </span>
             </span>
           </button>

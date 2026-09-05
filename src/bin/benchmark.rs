@@ -23,13 +23,14 @@
 //! the benchmark measures is the **audio**: the frequencies that come out, the
 //! decays that come out, and what they cost.
 //!
-//! `--dump series` writes `object,i,j,ratio` for the probe to diff.
+//! `--dump series` writes `id,object,i,j,ratio` for the probe to diff and for
+//! anything that wants to draw a series without a second solver.
 
 use std::fmt::Write as _;
 use std::time::Instant;
 
 use noob_resonator::dsp::bank::{Bank, ModeInfo};
-use noob_resonator::dsp::object::{Engine, Object, Shape};
+use noob_resonator::dsp::object::{Engine, OBJECT_NAMES, Object, Shape};
 use noob_resonator::dsp::{Point, Resonator, Settings, bank, damp, guide, select, tail};
 use rustfft::num_complex::Complex;
 
@@ -1235,18 +1236,59 @@ fn settle_section() -> Section {
 // main
 // ---------------------------------------------------------------------------
 
+/// The partial series of every object, as the engine itself computes it, for
+/// whatever wants to draw one without a second solver.
+///
+/// The first column is the object's **index in `Object::ALL`**, which is what
+/// the `type` parameter stores and what a preset and a saved session carry.
+/// The second is the label the manifest publishes. Neither is the Rust variant
+/// name, which this used to print: a variant is an internal name nothing else
+/// in the contract knows, so a reader keying off it would have been keying off
+/// the one identifier we are free to rename.
+///
+/// The air columns are here too, at their own default terminations — the Pipe
+/// stopped and the Tube open — and their `i` is the loop resonance's own
+/// one-based number, the same index a per-mode edit addresses. So a caller
+/// draws the odd series of a stopped pipe from the model that produces it
+/// rather than from `2n − 1` typed out again.
 fn dump_series() {
-    let mut out = String::new();
-    for object in Object::ALL {
-        if object.engine() != Engine::Bank {
-            continue;
-        }
-        let shape = Shape {
-            object,
-            ..Shape::default()
-        };
-        for p in noob_resonator::dsp::object::Walk::new(shape, 400.0).take(2000) {
-            let _ = writeln!(out, "{object:?},{},{},{:.10}", p.i, p.j, p.ratio);
+    let mut out = String::from(
+        "id,object,i,j,ratio
+",
+    );
+    for (id, object) in Object::ALL.iter().enumerate() {
+        let label = OBJECT_NAMES[id];
+        match object.engine() {
+            Engine::Bank => {
+                let shape = Shape {
+                    object: *object,
+                    ..Shape::default()
+                };
+                for p in noob_resonator::dsp::object::Walk::new(shape, 400.0).take(2000) {
+                    let _ = writeln!(out, "{id},{label},{},{},{:.10}", p.i, p.j, p.ratio);
+                }
+            }
+            Engine::Guide => {
+                let f0 = 220.0f32;
+                let mut g = guide::Guide::new(SR);
+                g.configure(&guide::Settings {
+                    f0,
+                    opening: if *object == Object::Tube { 1.0 } else { 0.0 },
+                    radius_mm: guide::RADIUS_REF_MM,
+                    decay: 4.0,
+                    tilt_db_oct: 0.0,
+                    hit: 0.107,
+                    pos_l: 0.213,
+                    pos_r: 0.379,
+                });
+                for r in g.resonances() {
+                    let ratio = r.hz / f0;
+                    if ratio > 400.0 {
+                        break;
+                    }
+                    let _ = writeln!(out, "{id},{label},{},0,{ratio:.10}", r.n);
+                }
+            }
         }
     }
     print!("{out}");

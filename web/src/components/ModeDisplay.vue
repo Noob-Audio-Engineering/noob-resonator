@@ -215,6 +215,17 @@ const bars = computed(() => {
     const top = Math.max(p.dbL ?? DB_FLOOR, p.dbR ?? DB_FLOOR);
     return {
       ...p,
+      /**
+       * The mode's own identity, and what every list here is keyed on.
+       *
+       * **A surface's modes routinely share a first index**, so keying on `i`
+       * alone collides: (1,5) and (1,6) are two different partials at two
+       * different frequencies with one key between them, and Vue then patches
+       * one element where two were meant. It was warning on both discs and
+       * every rectangle. The same pair that identifies an override identifies
+       * these, which is the point of having the pair at all.
+       */
+      key: `${p.i}:${p.j || 0}`,
       ratio: p.hz / f0.value,
       x: xHz(p.hz),
       xBase: p.baseHz ? xHz(p.baseHz) : null,
@@ -662,7 +673,7 @@ const tip = (p) =>
           <g class="g-lost">
             <rect
               v-for="p in resolved.filter((q) => q.lost)"
-              :key="`gh${p.i}`"
+              :key="`gh${p.key}`"
               :x="p.x - barW / 3"
               :y="p.yBare"
               :width="Math.max(1, barW / 1.5)"
@@ -672,7 +683,7 @@ const tip = (p) =>
           <g v-if="pending.size" class="g-pending">
             <rect
               v-for="p in resolved.filter((q) => previewOf(q))"
-              :key="`pd${p.i}-${p.j}`"
+              :key="`pd${p.key}`"
               :x="p.x - barW / 2 - 1"
               :y="geom.levelTop"
               :width="barW + 2"
@@ -682,7 +693,7 @@ const tip = (p) =>
           <g class="g-bar">
             <rect
               v-for="p in resolved"
-              :key="`b${p.i}`"
+              :key="`b${p.key}`"
               :class="{ edited: p.edited, picked: isPicked(p) }"
               :id="`partial-${p.i}-${p.j || 0}`"
               role="option"
@@ -697,7 +708,7 @@ const tip = (p) =>
             </rect>
           </g>
           <g class="g-right">
-            <line v-for="p in resolved" :key="`r${p.i}`" :x1="p.x - barW" :y1="p.yR" :x2="p.x + barW" :y2="p.yR" />
+            <line v-for="p in resolved" :key="`r${p.key}`" :x1="p.x - barW" :y1="p.yR" :x2="p.x + barW" :y2="p.yR" />
           </g>
         </g>
 
@@ -711,7 +722,7 @@ const tip = (p) =>
         <g class="g-handles">
           <line
             v-for="p in bars"
-            :key="`h${p.i}`"
+            :key="`h${p.key}`"
             :class="{ edited: p.edited, picked: isPicked(p), guide }"
             :x1="p.x"
             :y1="geom.levelBottom - 5"
@@ -724,7 +735,7 @@ const tip = (p) =>
         </g>
 
         <g class="g-dead">
-          <circle v-for="p in bars.filter((q) => q.dead)" :key="`x${p.i}`" :cx="p.x" :cy="geom.levelBottom - 2" r="2" />
+          <circle v-for="p in bars.filter((q) => q.dead)" :key="`x${p.key}`" :cx="p.x" :cy="geom.levelBottom - 2" r="2" />
         </g>
 
         <g v-if="crossX && fused.length" class="g-cross">
@@ -742,7 +753,7 @@ const tip = (p) =>
         <g v-if="geom.hasRing && ringPath" class="g-ring" :class="object.engine">
           <line :x1="PAD.l" :y1="geom.ringTop" :x2="W - PAD.r" :y2="geom.ringTop" class="edge" />
           <path :d="ringPath" class="line" />
-          <circle v-for="p in bars.filter((q) => q.ring != null)" :key="`rd${p.i}`" :cx="p.x" :cy="yRing(p.ring)" r="1.5" />
+          <circle v-for="p in bars.filter((q) => q.ring != null)" :key="`rd${p.key}`" :cx="p.x" :cy="yRing(p.ring)" r="1.5" />
           <text :x="W - PAD.r - 4" :y="geom.ringTop + 11" text-anchor="end" class="lane">ring time</text>
         </g>
       </svg>
@@ -751,8 +762,17 @@ const tip = (p) =>
         No <code>modes</code> stream in this build. The panel draws what the engine publishes and computes none of it.
       </div>
       <div v-if="settling" class="md__settling">still building the mode table · {{ Math.round(info.build * 100) }}%</div>
+      <!--
+        The stamp names the half that is invented, and it got narrower rather
+        than softer. The ratios on this axis are the engine's own table now,
+        read out of `benchmark --dump series`, so calling the whole picture the
+        page's arithmetic was overclaiming in the direction of caution — which
+        sounds harmless and is not, because a warning that is loose about what
+        it warns of is one a reader learns to discount. **Every level here is
+        still invented**, and that is the sentence a screenshot has to carry.
+      -->
       <div v-else-if="designMode" class="md__stamp">
-        design mode · these partials are the page’s own arithmetic, not the engine’s
+        design mode · every level here is the page’s own arithmetic · the ratios are the engine’s table
       </div>
 
       <ModeEditor v-if="pickedPartial" :partial="pickedPartial" @close="picked = null" />

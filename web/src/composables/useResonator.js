@@ -289,9 +289,56 @@ export function contactAxes(coords) {
   return { x: { suffix: '', hint: 'along it' }, y: { suffix: 'Y', hint: 'needs a surface' } };
 }
 
-/** Whether this object uses this control, and if not, why not. `null` when it is live. */
+/**
+ * Controls the published object table names that this build does not have.
+ *
+ * **A list that names a control the build does not publish is stale, and a
+ * stale list is not evidence about any control.** This exists because it
+ * happened: `object_meta()` kept naming `modes` after the parameter was
+ * renamed to `mode_budget`, so every bank object's `uses` array named a
+ * control that no longer existed and did not name the one that did — which
+ * would have greyed out the headline knob of the whole device, in the host
+ * only, while looking perfectly correct against a design manifest that had
+ * been updated. Nothing throws, nothing logs, and both sides are internally
+ * consistent.
+ *
+ * So the page compares the two lists it has and says so out loud.
+ */
+const driftCache = new WeakMap();
+function driftOf(meta) {
+  if (!meta || !Array.isArray(meta.uses)) return [];
+  let d = driftCache.get(meta);
+  if (d === undefined) {
+    d = meta.uses.filter((id) => !hasParam(id));
+    driftCache.set(meta, d);
+  }
+  return d;
+}
+
+/** Every id the object table names that this build does not publish, across all objects. */
+export function useMetaDrift() {
+  const table = useObjectTable();
+  return computed(() => {
+    const list = table.value;
+    if (!list) return [];
+    const out = new Set();
+    for (const o of list) for (const id of driftOf(o)) out.add(id);
+    return [...out].sort();
+  });
+}
+
+/**
+ * Whether this object uses this control, and if not, why not. `null` when it
+ * is live.
+ *
+ * **Greying stops entirely when the list is stale.** Showing a live control
+ * that the engine ignores is a small wrong; hiding a control the engine reads
+ * because a list forgot to be renamed is the kind of wrong that costs a user
+ * the feature. Fail towards the working panel and print the disagreement.
+ */
 export function inactive(id, object, meta) {
   if (!meta || !Array.isArray(meta.uses)) return null;
+  if (driftOf(meta).length) return null;
   if (meta.uses.includes(id)) return null;
   return WHY[id] || { short: 'not used by this object', why: `The engine does not read ${id} for a ${object.label}.` };
 }

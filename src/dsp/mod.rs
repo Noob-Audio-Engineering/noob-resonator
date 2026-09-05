@@ -452,7 +452,7 @@ pub fn object_meta() -> Value {
         "bypass",
     ];
     let bank_only = [
-        "modes",
+        "mode_budget",
         "select",
         "material",
         "damp_corner",
@@ -527,7 +527,7 @@ pub fn object_meta() -> Value {
             // angle rather than an x and a y — mapping a square into a circle
             // would put the control's corners on the rim, where a clamped
             // membrane's every mode is zero.
-            "coords": if *object == Object::MembraneRound {
+            "coords": if matches!(object, Object::MembraneRound | Object::PlateRound) {
                 "polar"
             } else if object.is_2d() {
                 "xy"

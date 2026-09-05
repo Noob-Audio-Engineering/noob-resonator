@@ -1,5 +1,5 @@
 /**
- * The eight objects, as the page knows them: what each one is called, which
+ * The ten objects, as the page knows them: what each one is called, which
  * engine produces it, what it is for, and where its numbers come from.
  *
  * **There is no arithmetic in this file and there must not be.** Every partial
@@ -10,11 +10,19 @@
  *
  * **The order is frozen and the list is append-only.** The first seven indices
  * are Corpus's own order, established from their presets, and a saved
- * project's object is its index — so nothing above may ever move. The eighth
- * is ours.
+ * project's object is its index — so nothing above may ever move. Everything
+ * from the eighth on is ours, and each was appended rather than inserted.
+ *
+ * **This list is checked against the engine, not trusted.** It went stale
+ * once: the engine appended Tine and Plate Round, this catalogue still had
+ * eight entries, and `objectAt` clamps — so choosing either would have drawn
+ * "Membrane Round" on the face while the audio thread ran a different object.
+ * A wrong name printed confidently is worse than a blank, so `tools/gen-previews.mjs`
+ * now fails outright if the engine's dump names an object this file does not
+ * have, or the other way round.
  *
  * `derivation` and `source` are printed on the face and are not decoration.
- * Seven of the eight series are the solution of a stated closed form. The
+ * Nine of the ten series are the solution of a stated closed form. The
  * marimba is the exception and is marked as one, in the warning colour: an
  * undercut bar is arrived at by cutting the arch until the partials land, so
  * no bare equation gives them. Marking that difference costs one word and it
@@ -136,6 +144,32 @@ export const OBJECTS = [
     derivation: 'closed form',
     source: 'the circular membrane fixed at the rim: f ∝ jₘₙ, the nth zero of the mth Bessel function',
     uses: 'Actual drums — toms, timpani, hand percussion. The rim is a node for every mode, so striking near the edge gives almost nothing and moving in towards the centre thins it to the round modes alone.',
+  },
+  {
+    id: 'tine',
+    label: 'Tine',
+    engine: 'modal',
+    twoD: false,
+    short: 'a bar clamped at one end',
+    blurb:
+      'The same bar with one end held instead of free — a tuning fork’s prong, a music box’s tooth, an electric piano’s tine. Clamping it throws the partials much further apart: 1, 6.27, 17.5, where the free bar gives 2.76 and 5.40. The second partial is over two and a half octaves up, so there is nothing in the range where a glockenspiel clangs, and what is left reads as a pure and slightly hollow pitch.',
+    derivation: 'closed form',
+    source: 'the transverse beam equation clamped at one end: frequencies as the square of the roots of cos x · cosh x = −1',
+    uses: 'Electric piano, music box and bell-like sine tones. The one object here that gives a near-pure pitch out of a struck body, because its overtones are too far up to argue with the fundamental — and moving Hit towards the clamped end is what puts the bark back in.',
+  },
+  {
+    id: 'plate_round',
+    label: 'Plate Round',
+    engine: 'modal',
+    twoD: true,
+    short: 'a stiff disc',
+    blurb:
+      'A disc held at its rim and standing up by its own stiffness rather than by tension — a bell plate, a gong, the family a cymbal belongs to. Its partials are 1 : 2.08 : 3.41 : 3.89 : 5.00, far wider than the round head’s 1 : 1.59 : 2.14, because a stiff object’s frequencies go as the square of the eigenvalue where a tensioned one goes as the eigenvalue itself. Same rim, same outline, an entirely different instrument.',
+    derivation: 'closed form',
+    source: 'the thin-plate equation on a disc clamped at the rim: f ∝ λ², the roots of Jₘ(λ)Iₘ₊₁(λ) + Iₘ(λ)Jₘ₊₁(λ) = 0',
+    caveat:
+      'a real cymbal is free at its rim rather than clamped, and its crash is a nonlinearity no linear resonator has — this is the clamped disc, which is a bell plate',
+    uses: 'Gongs, bell plates and metallic washes with a pitch in them. Denser than a bar and wider than a drum head, so it is the object to reach for when a hit should come back as metal that still has a note.',
   },
 ];
 

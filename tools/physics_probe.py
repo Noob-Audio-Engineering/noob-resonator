@@ -9,8 +9,11 @@ before it is used to check anything of ours.
     python p1_physics.py                 # the tables, and the published checks
     python p1_physics.py --compare FILE  # ... and diff against a dump from the engine
 
-The dump format is what `benchmark --dump series` writes: lines of
-`object,i,j,ratio`.
+The dump format is what `benchmark --dump series` writes: a header row, then
+lines of `id,object,i,j,ratio`, where `id` is the object's index in the
+engine's own list and `object` is the label the manifest publishes. This file
+keys off the label, checks that each label carries one id and no more, and
+never looks at a Rust type name.
 """
 
 import math
@@ -373,39 +376,82 @@ def tables():
         print(f"  {name:<22} {n}")
 
 
+def air_column(count, stopped):
+    """An ideal air column: `n` open at both ends, `2n-1` with one end stopped.
+
+    The engine's columns are delay loops with a fractional length, a wall loss
+    and an end correction, so these are the only rows where the two are not
+    expected to agree to a rounding error. What they check is that the
+    terminations produce the series the terminations imply, which is the whole
+    difference between the two objects.
+    """
+    return [float(2 * n - 1) if stopped else float(n) for n in range(1, count + 1)]
+
+
+# The published label of every object this file can produce a series for, the
+# tolerance it is held to, and how many partials that tolerance covers.
+#
+# The modal objects are closed form on both sides, so they are held to a
+# rounding error over every partial the engine publishes. The air columns are
+# not: they are a sampled delay loop with a third-order Lagrange fractional
+# delay, whose phase error grows with frequency, so their agreement with an
+# ideal column is a band-limited claim. They are held to the same sixteen
+# partials and the same one cent the benchmark publishes, and the drift above
+# that is printed rather than asserted.
+SERIES = {
+    "Beam": (lambda n: {(i, 0): r for i, r in enumerate(beam_ratios(n), start=1)}, 0.001, None),
+    "Tine": (lambda n: {(i, 0): r for i, r in enumerate(tine_ratios(n), start=1)}, 0.001, None),
+    "String": (lambda n: {(i, 0): r for i, r in enumerate(string_ratios(n), start=1)}, 0.001, None),
+    "Membrane": (lambda n: {(m, k): r for r, m, k in membrane_rect(1.0, 10**9)}, 0.001, None),
+    "Plate": (lambda n: {(m, k): r for r, m, k in plate_rect(1.0, 10**9)}, 0.001, None),
+    "Plate Round": (lambda n: {(m, k): r for r, m, k in plate_round(10**9)}, 0.001, None),
+    "Membrane Round": (lambda n: {(m, k): r for r, m, k in membrane_round(10**9)}, 0.001, None),
+    "Pipe": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, True), start=1)}, 1.0, 16),
+    "Tube": (lambda n: {(i, 0): r for i, r in enumerate(air_column(n, False), start=1)}, 1.0, 16),
+}
+
+
 def compare(path):
     """Diff a dump from the engine against this file's own arithmetic."""
     print(f"\nComparing {path}")
     rows = {}
+    ids = {}
+    bad_ids = []
     with open(path) as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            obj, i, j, r = line.split(",")
+            parts = line.split(",")
+            if parts[0] == "id":
+                continue  # the header
+            if len(parts) != 5:
+                raise SystemExit(f"expected `id,object,i,j,ratio`, got: {line}")
+            ident, obj, i, j, r = parts
+            # One label, one index, for the whole file: an object's index is
+            # what a preset and a saved session store, so a label that arrived
+            # under two of them would mean a table that had drifted from the
+            # engine's own order.
+            if ids.setdefault(obj, ident) != ident:
+                bad_ids.append((obj, ids[obj], ident))
             rows.setdefault(obj, []).append((int(i), int(j), float(r)))
 
+    if bad_ids:
+        for obj, first, second in bad_ids:
+            print(f"  !! {obj} arrives under two ids, {first} and {second}")
+
+    failed = False
     worst_all = 0.0
-    for obj, got in sorted(rows.items()):
-        if obj == "Beam":
-            want = {(i, 0): r for i, r in enumerate(beam_ratios(len(got) + 2), start=1)}
-        elif obj == "Tine":
-            want = {(i, 0): r for i, r in enumerate(tine_ratios(len(got) + 2), start=1)}
-        elif obj == "String":
-            want = {(i, 0): r for i, r in enumerate(string_ratios(len(got) + 2), start=1)}
-        elif obj == "Membrane":
-            want = {(m, n): r for r, m, n in membrane_rect(1.0, 10**9)}
-        elif obj == "Plate":
-            want = {(m, n): r for r, m, n in plate_rect(1.0, 10**9)}
-        elif obj == "PlateRound":
-            want = {(m, n): r for r, m, n in plate_round(10**9)}
-        elif obj == "MembraneRound":
-            want = {(m, n): r for r, m, n in membrane_round(10**9)}
-        else:
+    for obj, got in sorted(rows.items(), key=lambda kv: int(ids[kv[0]])):
+        entry = SERIES.get(obj)
+        if entry is None:
             print(f"  {obj}: no independent series here, skipped")
             continue
+        build, tol, head = entry
+        want = build(len(got) + 2)
         worst = 0.0
         worst_at = None
+        beyond = 0.0
         missing = 0
         for i, j, r in got:
             w = want.get((i, j))
@@ -413,12 +459,21 @@ def compare(path):
                 missing += 1
                 continue
             c = abs(cents(r, w))
+            if head is not None and i > head:
+                beyond = max(beyond, c)
+                continue
             if c > worst:
                 worst, worst_at = c, (i, j)
         worst_all = max(worst_all, worst)
         note = f" ({missing} not in the probe's own range)" if missing else ""
-        print(f"  {obj:<16} worst {worst:.6f} cents at {worst_at}{note}")
+        if head is not None:
+            note += f", {beyond:.3f} cents worst above partial {head}"
+        mark = "" if worst <= tol else f"  ** over {tol} cents"
+        failed = failed or worst > tol
+        print(f"  {obj:<16} id {ids[obj]:>2}  worst {worst:.6f} cents at {worst_at}{note}{mark}")
     print(f"  -> worst over every object: {worst_all:.6f} cents")
+    if bad_ids or failed:
+        raise SystemExit(1)
     return worst_all
 
 

@@ -54,6 +54,40 @@
 //! system that could not capture it would leave the one distinctive feature
 //! unsaveable — and `Hand Bell` below exists to prove the point, since it is
 //! a plain string with five partials moved onto a bell's own series.
+//!
+//! ## Two field names, and why they are these ones
+//!
+//! `description` and `modes` rather than `notes` and `edits`. Both halves of
+//! the contract were written to these independently, which is weak evidence
+//! for them and no evidence at all about the alternative, so here is the
+//! actual argument. **`notes` is a collision in this plug-in specifically**:
+//! it is a resonator, a note is the thing you play it with, and a field of
+//! that name beside `tune` and `transpose` will be read as one at least once.
+//! And `modes` is the name this table already has everywhere else it appears
+//! — the store key, the stream, the mode editor — where `edits` would be a
+//! fourth name for the same object. The shapes are otherwise identical, so
+//! either set works; these two are the ones that do not have to be explained.
+//!
+//! ## Room for a table that was generated rather than chosen
+//!
+//! A chord generator — a root and a set of intervals filling the same bank
+//! that an object's series fills — would be a different way to answer "what
+//! is it tuned to" rather than "what is it made of", and the format already
+//! carries one without a version bump.
+//!
+//! Its controls would be parameters like any other, so they travel in
+//! `values` by id, and unknown ids are ignored on load, which is what lets an
+//! older build open a preset that names them. The **result** travels in
+//! `modes`, because the table is already the thing a generator writes into.
+//! So a preset can carry the recipe, or the result, or both, and a build that
+//! has the generator reproduces the first while a build that does not still
+//! loads the second.
+//!
+//! **The one rule that has to survive** is that a generator writes the table
+//! and then leaves: generate *then* edit, never generate *instead of* edit. A
+//! preset that carried only a chord and no table would quietly make the
+//! per-partial editor unreachable for anything that used it, which would
+//! trade the feature this whole architecture exists for against a menu.
 
 use serde_json::{Map, Value, json};
 
@@ -237,13 +271,61 @@ pub fn factory() -> Vec<Preset> {
         Preset {
             name: "Piano Wire",
             group: g(Object::String),
-            description: "Stiffness stretches the upper partials, which is why a piano is not a harp.",
+            description: "Real wire is stiff, and stiffness pulls a string's partials sharp as n·sqrt(1 + Bn²). This is B = 3×10⁻⁴, the figure Lehtonen and colleagues measured on a piano C4: the sixteenth partial comes out 64 cents sharp, which is most of a semitone, and it is why a piano is tuned with stretched octaves.",
             settings: Settings {
                 tune_hz: 131.0,
                 decay_s: 6.0,
                 material: -0.6,
-                inharm: 0.32,
+                inharm: 0.31623,
                 bright_db_oct: -3.5,
+                ..on(Object::String)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Harp Wire",
+            group: g(Object::String),
+            description: "The same string with the stiffness taken back out, one control apart: a harmonic series exactly, no stretch, and nothing to tune around. That is the whole difference between the two instruments.",
+            settings: Settings {
+                tune_hz: 131.0,
+                decay_s: 6.0,
+                material: -0.6,
+                inharm: 0.0,
+                bright_db_oct: -3.5,
+                ..on(Object::String)
+            },
+            modes: vec![],
+        },
+        // The strike comb. A pair, because it is a null, and a null is only
+        // audible against the thing it takes away.
+        Preset {
+            name: "Hammer at the Middle",
+            group: g(Object::String),
+            description: "A contact cannot excite a partial that has a node under it. At the middle of a string that is every even partial, so what is left is the odd half of the series and a hollow, stopped sort of tone.",
+            settings: Settings {
+                tune_hz: 147.0,
+                decay_s: 4.0,
+                material: -0.5,
+                bright_db_oct: -3.0,
+                hit: crate::dsp::Point::new(0.5, 0.0),
+                pos_l: crate::dsp::Point::new(0.12, 0.0),
+                pos_r: crate::dsp::Point::new(0.31, 0.0),
+                ..on(Object::String)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Hammer at a Seventh",
+            group: g(Object::String),
+            description: "The same string with the strike moved to a seventh of its length, one control apart. That puts a node under the seventh partial and its multiples and under nothing else, which is the reason a piano's hammer lands about there.",
+            settings: Settings {
+                tune_hz: 147.0,
+                decay_s: 4.0,
+                material: -0.5,
+                bright_db_oct: -3.0,
+                hit: crate::dsp::Point::new(1.0 / 7.0, 0.0),
+                pos_l: crate::dsp::Point::new(0.12, 0.0),
+                pos_r: crate::dsp::Point::new(0.31, 0.0),
                 ..on(Object::String)
             },
             modes: vec![],
@@ -319,7 +401,7 @@ pub fn factory() -> Vec<Preset> {
             description: "Compare with B. The same membrane and the same 128 modes, spent on the partials that carry the most energy.",
             settings: Settings {
                 tune_hz: 110.0,
-                decay_s: 2.5,
+                decay_s: 3.0,
                 modes: 128,
                 order: 0,
                 tail: false,
@@ -333,10 +415,42 @@ pub fn factory() -> Vec<Preset> {
             description: "Compare with A. Identical but for one control: the same 128 modes spent on the lowest partials instead, which is where the object goes deaf.",
             settings: Settings {
                 tune_hz: 110.0,
-                decay_s: 2.5,
+                decay_s: 3.0,
                 modes: 128,
                 order: 1,
                 tail: false,
+                ..on(Object::Membrane)
+            },
+            modes: vec![],
+        },
+        // The other pair, and the one that says why the default tilt is not
+        // zero. Measured on this engine at these exact settings.
+        Preset {
+            name: "Sloped Strike",
+            group: g(Object::Membrane),
+            description: "A struck object radiates less at the top of its range than at the bottom, and this is the device's own default slope of -3 dB per octave. With it, the 512 modes land across the band: 286 of them between 1.5 and 10 kHz, and none above.",
+            settings: Settings {
+                tune_hz: 110.0,
+                decay_s: 2.5,
+                modes: 512,
+                order: 0,
+                tail: false,
+                bright_db_oct: -3.0,
+                ..on(Object::Membrane)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Flat Strike",
+            group: g(Object::Membrane),
+            description: "One control apart, and it is the trap inside the whole idea of keeping the loudest partials. A mass-normalised mode set has no amplitude trend at all, so with the excitation flat there is nothing left for \"loudest\" to prefer, and the denser high octaves take the entire budget: none of the 512 between 1.5 and 10 kHz, and 292 above 10 kHz.",
+            settings: Settings {
+                tune_hz: 110.0,
+                decay_s: 2.5,
+                modes: 512,
+                order: 0,
+                tail: false,
+                bright_db_oct: 0.0,
                 ..on(Object::Membrane)
             },
             modes: vec![],
@@ -370,11 +484,54 @@ pub fn factory() -> Vec<Preset> {
             },
             modes: vec![],
         },
+        // The damping law, which is one number and a slope.
+        Preset {
+            name: "Wood",
+            group: g(Object::Plate),
+            description: "Material is the exponent in T60(f) = T60(f1)·(f/f1)^m, which Applied Acoustics publish quantitatively for the engine this one answers. At -1 a partial an octave up rings for half as long, so the top of the spectrum has gone before the bottom has begun to fade.",
+            settings: Settings {
+                tune_hz: 180.0,
+                decay_s: 3.0,
+                material: -1.0,
+                aspect: 1.4,
+                ..on(Object::Plate)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Bronze",
+            group: g(Object::Plate),
+            description: "The same plate with that exponent at +1 instead, one control apart, where the octave up rings twice as long rather than half. Nothing else moved: the difference between a wood block and a bell is a single slope.",
+            settings: Settings {
+                tune_hz: 180.0,
+                decay_s: 3.0,
+                material: 1.0,
+                aspect: 1.4,
+                ..on(Object::Plate)
+            },
+            modes: vec![],
+        },
         // -- Pipe ---------------------------------------------------------
+        Preset {
+            name: "Half Open",
+            group: g(Object::Pipe),
+            description: "The far end part way open, where the even partials are fading in out of nothing.",
+            settings: Settings {
+                tune_hz: 165.0,
+                decay_s: 3.0,
+                radius_mm: 30.0,
+                opening: 0.45,
+                ..on(Object::Pipe)
+            },
+            modes: vec![],
+        },
+        // The far end, which is the entire difference between the two air
+        // columns and is worth meeting as one control rather than two
+        // objects. Both lengths are the model's own, read off the info frame.
         Preset {
             name: "Stopped Pipe",
             group: g(Object::Pipe),
-            description: "Far end closed: odd harmonics only, sounding an octave below an open tube of the same length.",
+            description: "What happens at the far end is the whole of it. Closed, a pressure wave comes back with its sign intact, only the odd harmonics survive, and this note comes out of 0.57 m of air.",
             settings: Settings {
                 tune_hz: 147.0,
                 decay_s: 2.5,
@@ -385,14 +542,14 @@ pub fn factory() -> Vec<Preset> {
             modes: vec![],
         },
         Preset {
-            name: "Half Open",
+            name: "Open Pipe",
             group: g(Object::Pipe),
-            description: "The far end part way open, where the even partials are fading in out of nothing.",
+            description: "One control apart: open, the wave comes back inverted, every harmonic survives, and the same note now needs 1.14 m — exactly twice the column, which is why a stopped organ pipe is half the size of an open one at the same pitch.",
             settings: Settings {
-                tune_hz: 165.0,
-                decay_s: 3.0,
-                radius_mm: 30.0,
-                opening: 0.45,
+                tune_hz: 147.0,
+                decay_s: 2.5,
+                radius_mm: 22.0,
+                opening: 1.0,
                 ..on(Object::Pipe)
             },
             modes: vec![],
@@ -426,11 +583,28 @@ pub fn factory() -> Vec<Preset> {
         Preset {
             name: "Timpani",
             group: g(Object::MembraneRound),
-            description: "A disc struck a quarter of the way in, which is where a timpanist strikes and why it has a pitch.",
+            description: "A disc struck a quarter of the way in, which is where a timpanist strikes and why it has a pitch. Above 1,040 Hz its partials sit closer together than their own bandwidths and stop being separately audible, and a feedback delay network carries the sound from there up, at -26.6 dB.",
             settings: Settings {
                 tune_hz: 73.0,
                 decay_s: 3.0,
                 material: -0.6,
+                tail: true,
+                hit: crate::dsp::Point::new(0.62, 0.1),
+                pos_l: crate::dsp::Point::new(0.4, 0.05),
+                pos_r: crate::dsp::Point::new(0.4, 0.55),
+                ..on(Object::MembraneRound)
+            },
+            modes: vec![],
+        },
+        Preset {
+            name: "Timpani, Bank Only",
+            group: g(Object::MembraneRound),
+            description: "The same head one control apart, with the tail off. The modes below 1,040 Hz are unchanged and exact — that is not what the tail is for — and above it the object simply stops, which is what a truncated bank does when nothing carries the rest.",
+            settings: Settings {
+                tune_hz: 73.0,
+                decay_s: 3.0,
+                material: -0.6,
+                tail: false,
                 hit: crate::dsp::Point::new(0.62, 0.1),
                 pos_l: crate::dsp::Point::new(0.4, 0.05),
                 pos_r: crate::dsp::Point::new(0.4, 0.55),
@@ -486,6 +660,20 @@ pub fn factory() -> Vec<Preset> {
             },
             modes: vec![],
         },
+        Preset {
+            name: "Tuning Fork",
+            group: g(Object::Tine),
+            description: "Held open with the tilt down, so almost nothing but the fundamental survives.",
+            settings: Settings {
+                tune_hz: 440.0,
+                decay_s: 30.0,
+                material: -0.1,
+                bright_db_oct: -6.0,
+                modes: 8,
+                ..on(Object::Tine)
+            },
+            modes: vec![],
+        },
         // -- Plate Round --------------------------------------------------
         Preset {
             name: "Crash Cymbal",
@@ -516,20 +704,6 @@ pub fn factory() -> Vec<Preset> {
                 pos_l: crate::dsp::Point::new(0.45, 0.1),
                 pos_r: crate::dsp::Point::new(0.7, 0.55),
                 ..on(Object::PlateRound)
-            },
-            modes: vec![],
-        },
-        Preset {
-            name: "Tuning Fork",
-            group: g(Object::Tine),
-            description: "Held open with the tilt down, so almost nothing but the fundamental survives.",
-            settings: Settings {
-                tune_hz: 440.0,
-                decay_s: 30.0,
-                material: -0.1,
-                bright_db_oct: -6.0,
-                modes: 8,
-                ..on(Object::Tine)
             },
             modes: vec![],
         },
