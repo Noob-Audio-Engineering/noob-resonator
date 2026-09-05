@@ -95,16 +95,22 @@ const rootHz = computed(() =>
 function voiceOff(index) {
   const byObject = off('voices');
   if (byObject) return byObject;
-  // **A held note bypasses this control rather than writing it**, so while the
-  // note is down the knob shows one pitch and the voice sounds another. That is
-  // deliberate at the engine — a parameter the audio thread wrote behind the
-  // host's back is a gesture nothing recorded — but it means the control is not
-  // in charge, and a knob that does not say so is a knob claiming a pitch it is
-  // not setting.
+  // **The keyboard can set this voice without writing this control**, and then
+  // the knob shows one pitch while the voice sounds another. That is deliberate
+  // at the engine — a parameter the audio thread wrote behind the host's back is
+  // a gesture nothing recorded — but it means the control is not in charge, and
+  // a knob that does not say so is a knob claiming a pitch it is not setting.
+  //
+  // **The wording covers both routes on purpose.** `voice_source` says the
+  // pitch does not come from this parameter; it does not say why, and it should
+  // not — a note held down and a chord recalled by note are the same fact about
+  // this control. Naming only the first was true of the field as first defined
+  // and false of what it means, which is the coincidence-of-predicates fault
+  // that has bitten this project more than once.
   if (info.voiceSource(index) === 1) {
     return {
-      short: 'a held note has it',
-      why: 'A note is holding this voice, and while it is down the keyboard sets the pitch rather than this control. The value here is kept and comes back the moment you let go.',
+      short: 'the keyboard has it',
+      why: 'This voice is being set from the keyboard rather than from this control — a note holding it, or a chord recalled by note. The value here is kept and comes back.',
     };
   }
   if (index < chords.sounding) return null;
@@ -114,7 +120,7 @@ function voiceOff(index) {
   };
 }
 
-/** How many voices a keyboard is holding right now. */
+/** How many voices the keyboard is setting rather than their own controls. */
 const held = computed(() => chords.ids.filter((_, i) => info.voiceSource(i) === 1).length);
 
 /**
@@ -170,7 +176,7 @@ const ax = (base, which) => {
           off('voices')
             ? off('voices').short
             : held
-              ? `${held} voice${held === 1 ? '' : 's'} held from the keyboard`
+              ? `${held} voice${held === 1 ? '' : 's'} set from the keyboard`
               : `what it is tuned to · ${chords.label}`
         }}</span>
       </h3>

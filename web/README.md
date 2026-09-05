@@ -509,11 +509,23 @@ is the ruler-and-bars fault with a keyboard attached, and it would have been
 invisible: nothing on screen is wrong, the number is simply not the one you are
 hearing.
 
-So the engine publishes `voice_source` per voice — its parameter, a held note,
-or not sounding — and while a note holds a voice its knob greys with *a held
-note has it* and the group says how many are held. **The knob does not move to
-match.** Following the sounding pitch would leave the parameters somewhere the
-user never put them the moment the keys came up.
+So the engine publishes `voice_source` per voice, and **what it means is the
+predicate that matters: this voice's pitch does not come from its parameter,
+whatever moved it.** A knob in that state greys with *the keyboard has it* and
+the group says how many. **The knob does not move to match.** Following the
+sounding pitch would leave the parameters somewhere the user never put them the
+moment the keys came up.
+
+**That predicate took a correction, and it is the sharpest thing in this
+feature.** The field was first defined as *a key is down*, which coincides with
+*the control is not in charge* for a held note and comes apart for a chord
+recalled by note — a recall is an instruction rather than a key, so the voices
+moved while the field still said the parameter was in charge. One question
+answered by a predicate that happens to agree with it, until something breaks
+the coincidence: the same fault as a test asserting `has("modes") == !guide`,
+and as an object's contact coordinates checked against the same `matches!` the
+code used. The face's wording names neither route on purpose, because a note
+held down and a chord recalled by note are the same fact about this control.
 
 **Two routes to the same chord, and only one of them lets go.** A slot recall
 *writes* the voice pitches through the ordinary edit path, so it stands until
@@ -535,14 +547,19 @@ a performance affordance nobody can discover is not one.
 a valid chord — unison — so a half-written entry would retune the instrument
 instead of doing nothing, which is why an entry here is complete or absent.
 
-**One case the face cannot see, recorded rather than papered over.** A slot
-recalled *from MIDI* sounds the slot's pitches while `voice_source` reports the
-parameter, because a recall is an instruction rather than a key held down. The
-engine deliberately does not report a third state — the same chord would read
-differently depending on which hand recalled it, and that difference is not
-about the sound. It is the one place the deck can claim a control is in charge
-when it is not, and it is written down here so the next person meets it as a
-known limit rather than as a bug.
+**And it stayed two states rather than becoming three, which is the right
+resolution.** The engine deliberately does not distinguish a panel recall from a
+note recall — the same chord would read differently depending on which hand
+moved it, and that difference is not about the sound. What changed is the
+boundary between the two states, not their number: a panel recall *writes* the
+parameter, so the parameter is in charge and the field says so; a note recall
+does not, so it does not. One predicate, true of both routes, and the thing the
+face actually needs to know.
+
+**The face was written to the corrected predicate before the engine carried
+it**, the same way the air-column readout stopped claiming a length before the
+field went NaN. Its wording is true under both definitions, so nothing here
+changes when the engine lands the fix.
 
 ### The browse view — **the sibling lab did this first**
 
