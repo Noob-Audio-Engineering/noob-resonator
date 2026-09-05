@@ -17,6 +17,7 @@ publish = false
 # How this plug-in presents itself in the plug-in manager. It lives here so
 # each plug-in owns its own description --- the manager has no list of them.
 [package.metadata.noob]
+kind = "effect"
 name = "Noob Resonator"
 accent = "#4fd6c8"
 tagline = "A modal and waveguide resonator whose mode budget is spent by contribution rather than by frequency."
