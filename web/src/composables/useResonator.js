@@ -36,7 +36,6 @@ import { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js'
 
 export { getClient, hasParam, hasStream, useParam, useNoobVstWebguiFramework, useStoredRef };
 export { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js';
-export { valueText } from '../format.js';
 
 /** Smallest window the panel lays out in, `[width, height]` CSS pixels; the Rust side will clamp to the same. */
 export const WINDOW_MIN = [900, 520];

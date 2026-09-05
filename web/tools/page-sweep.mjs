@@ -179,6 +179,60 @@ console.log('\n=== every object · 1100x620 ===');
   await page.close();
 }
 
+/**
+ * A count prints as a count, at the values where it could fail.
+ *
+ * The mode budget is a number of resonators and the manifest says so with
+ * `decimals: 0`. The client honours that — but only a client new enough to
+ * know the field, and this page has shipped against one that did not. **What
+ * makes this check worth having is the value it uses.** The knob was verified
+ * at its default of 1024, where the old fallback's magnitude rule prints a
+ * clean integer whatever the hint says, and it read correctly. At 32 it read
+ * `32.0` and at 4 it read `4.00`. So this drives it to the bottom of its
+ * travel, which is where the two behaviours differ.
+ */
+console.log('\n=== a count prints as a count ===');
+{
+  const page = await open(DEV, 1400, 900, 'counts');
+  const modes = async () =>
+    page.evaluate(() => {
+      const k = [...document.querySelectorAll('.knob')].find(
+        (x) => /^modes$/i.test((x.querySelector('.knob__label')?.textContent || '').trim()),
+      );
+      return k ? (k.querySelector('.knob__value-text')?.textContent || '').trim() : null;
+    });
+  // A mode bank, so Modes is live rather than greyed.
+  await page.evaluate(async () => {
+    [...document.querySelectorAll('button')].find((b) => /change resonator/i.test(b.textContent || ''))?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    document.querySelectorAll('.browse__card')[2]?.click();
+  });
+  await page.waitForTimeout(1400);
+  await page.evaluate(() => {
+    const k = [...document.querySelectorAll('.knob')].find(
+      (x) => /^modes$/i.test((x.querySelector('.knob__label')?.textContent || '').trim()),
+    );
+    k?.querySelector('.knob__dial')?.focus();
+  });
+  const seen = [];
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(400);
+  seen.push(await modes());
+  for (let i = 0; i < 30; i++) await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(400);
+  seen.push(await modes());
+  console.log(`  Modes at the bottom of its travel: ${seen.join(', ')}`);
+  for (const t of seen) {
+    if (t == null) continue;
+    if (t.includes('.')) {
+      problems++;
+      console.log(`  !! a count printed with a decimal point: ${t}`);
+    }
+  }
+  if (seen.every((t) => t && !t.includes('.'))) console.log('  a count prints whole where the rule changes, not only at its default');
+  await page.close();
+}
+
 // --- the built bundle ------------------------------------------------------
 console.log(`\n=== production bundle · ${PROD} ===`);
 {

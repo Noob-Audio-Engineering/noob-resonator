@@ -99,14 +99,18 @@ export const BAR_THIRDS = ['9.2x', '10x'];
 export const PARAMS = stepped([
   { id: 'type', name: 'Object', labels: OBJECTS.map((o) => o.label), default: 2, group: 'body' },
   { id: 'tune', name: 'Tune', min: 20, max: 4000, default: 220, unit: 'Hz', taper: 'log', group: 'body' },
-  { id: 'transpose', name: 'Transpose', min: -48, max: 48, default: 0, unit: 'st', group: 'body' },
+  // `decimals: 0` on the two that are counts of whole things, mirroring the
+  // engine. **A hint the manifest declares and the mirror omits is a
+  // design-versus-live divergence**, and this one showed itself: the Modes knob
+  // read 4.00 against the stand-in and 4 against the engine, on the same page.
+  { id: 'transpose', name: 'Transpose', min: -48, max: 48, default: 0, unit: 'st', decimals: 0, group: 'body' },
   { id: 'fine', name: 'Fine', min: -50, max: 50, default: 0, unit: 'ct', group: 'body' },
   // `mode_budget`, not `modes`: the stream is called `modes`, and a name that
   // means two things on one wire is a trap for whoever comes next. Not
   // "quality" either — that is their word for a control that truncates by
   // frequency and then needs a Bleed knob to restore what it threw away, and
   // this one spends a budget by contribution. The face still says Modes.
-  { id: 'mode_budget', name: 'Modes', min: 4, max: MAX_MODES, default: 1024, taper: 'log', group: 'engine' },
+  { id: 'mode_budget', name: 'Modes', min: 4, max: MAX_MODES, default: 1024, taper: 'log', decimals: 0, group: 'engine' },
   { id: 'select', name: 'Selection', labels: SELECT_LABELS, default: 0, group: 'engine' },
 
   // The voices. **A voice is a root, not a partial**: each one gets the

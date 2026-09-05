@@ -26,7 +26,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { COUNT_MAX, countAt, fieldAt, isCount, parseLayout } from '../src/streams.js';
-import { valueText } from '../src/format.js';
 
 /** The engine's own two layouts, as `dsp::streams` declares them. */
 const MODES = 'i,j,hz,db_l,db_r,t60_s';
@@ -156,37 +155,4 @@ test('and refusing it is not the same as hiding it', () => {
   const frame = [12, -1];
   assert.equal(countAt(frame, layout, 'modes_available'), null, 'refused');
   assert.equal(fieldAt(frame, layout, 'modes_available'), -1, 'but still there to be complained about');
-});
-
-// ---------------------------------------------------------------------------
-
-test('a parameter that says it is whole prints whole, at every value', () => {
-  // **The values that could not fail are the ones this was checked at.** The
-  // rounding was removed when the manifest gained a `decimals` hint, verified
-  // live at the mode budget's default of 1024 — where the client's own fallback
-  // prints a clean integer whatever the hint says, because it is a magnitude
-  // rule and 1024 is over a thousand. Below a hundred that rule prints one
-  // decimal and below ten it prints two, so the knob read 32.0 and 4.00: the
-  // exact false precision the hint exists to remove, in the exact range a mode
-  // budget is actually used.
-  const count = { spec: { decimals: 0, min: 4, max: 4096 }, plain: 4, text: '4.00' };
-  assert.equal(valueText(count), '4');
-  assert.equal(valueText({ ...count, plain: 32, text: '32.0' }), '32');
-  assert.equal(valueText({ ...count, plain: 1024, text: '1024' }), '1024');
-
-  const semis = { spec: { decimals: 0, unit: 'st', min: -24, max: 36 }, plain: 0, text: '0.00 st' };
-  assert.equal(valueText(semis), '0 st', 'the unit comes with it');
-  assert.equal(valueText({ ...semis, plain: -12, text: '-12.0 st' }), '-12 st');
-});
-
-test('and a parameter that says nothing keeps the client’s own formatting', () => {
-  // The page is filling in for a client that does not implement the hint yet.
-  // Where there is no hint there is nothing to fill in, and where the client's
-  // rendering is not about decimals at all — an enumeration, a toggle — it is
-  // left alone entirely.
-  assert.equal(valueText({ spec: { unit: 'Hz' }, plain: 440, text: '440 Hz' }), '440 Hz');
-  assert.equal(valueText({ spec: { decimals: 0, labels: ['Loudest', 'Lowest'], steps: 2 }, plain: 0, text: 'Loudest' }), 'Loudest');
-  assert.equal(valueText({ spec: { decimals: 0, steps: 2 }, plain: 1, text: 'On' }), 'On');
-  assert.equal(valueText({ spec: { decimals: 0 }, plain: NaN, text: '—' }), '—', 'a value that is not a number is the client’s problem, not this one');
-  assert.equal(valueText(null), '—');
 });
