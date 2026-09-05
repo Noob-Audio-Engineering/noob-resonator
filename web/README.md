@@ -498,6 +498,52 @@ engine's call and worth recording: `Major` is `[0, 7, 16]` — the third an octa
 up — because six fundamentals inside four semitones is one thick note rather
 than a chord.
 
+### Played from a keyboard, and six chords you can keep
+
+**A held note overrides the voice's control rather than writing it**, and the
+face has to say so. The engine does that deliberately — *a parameter the audio
+thread wrote behind the host's back is a gesture nothing recorded and an
+automation lane that fights the player* — but the consequence is that while
+notes are down **the knob shows one pitch and the voice sounds another**. That
+is the ruler-and-bars fault with a keyboard attached, and it would have been
+invisible: nothing on screen is wrong, the number is simply not the one you are
+hearing.
+
+So the engine publishes `voice_source` per voice — its parameter, a held note,
+or not sounding — and while a note holds a voice its knob greys with *a held
+note has it* and the group says how many are held. **The knob does not move to
+match.** Following the sounding pitch would leave the parameters somewhere the
+user never put them the moment the keys came up.
+
+**Two routes to the same chord, and only one of them lets go.** A slot recall
+*writes* the voice pitches through the ordinary edit path, so it stands until
+something else changes them and undo reaches it. A held note only borrows the
+voices, and lifting your hands gives them back exactly as they were. That is the
+difference a player actually feels, so the slot strip says it rather than
+leaving it to be discovered.
+
+**The six slots are the page's, in the engine's shape.** They hold
+`{ semis, voices }` at the key the manifest names, because the engine reads them
+to recall one from a note and **a second shape for the same thing is how two
+halves of a product come to disagree**. An earlier version of this file invented
+its own key and a `name` field before the engine had specified one; both are
+gone. A slot is a position and a note, which is what a performer recalls it by,
+and the recall notes are printed from `meta.slot_notes` rather than hardcoded —
+a performance affordance nobody can discover is not one.
+
+**An unstored slot recalls nothing rather than a chord of zeros.** Six zeroes is
+a valid chord — unison — so a half-written entry would retune the instrument
+instead of doing nothing, which is why an entry here is complete or absent.
+
+**One case the face cannot see, recorded rather than papered over.** A slot
+recalled *from MIDI* sounds the slot's pitches while `voice_source` reports the
+parameter, because a recall is an instruction rather than a key held down. The
+engine deliberately does not report a third state — the same chord would read
+differently depending on which hand recalled it, and that difference is not
+about the sound. It is the one place the deck can claim a control is in charge
+when it is not, and it is written down here so the next person meets it as a
+known limit rather than as a bug.
+
 ### The browse view — **the sibling lab did this first**
 
 Choosing an object is a view, one per row, grouped by family, with a "Good
@@ -981,7 +1027,7 @@ designing is not quietly wrong.
 | `components/PresetBrowser.vue` | presets, one per row, grouped by object, with the A/B pairs marked |
 | `composables/usePresets.js` | the preset format, loading, saving and the edited-since diff |
 | `composables/useChords.js` | the chord menu, applied through the edit path; which chord is showing, derived from the live pitches |
-| `components/ChordBrowser.vue` | the sixteen chords, one row each, with their semitones and the notes they land on |
+| `components/ChordBrowser.vue` | the sixteen chords and the six slots, with the semitones, the notes they land on, and the note that recalls each slot |
 | `components/LevelStrip.vue` | in, out, clip and the limiter's gain reduction |
 | `components/TypeBrowser.vue` | the browse view |
 | `components/SeriesPreview.vue` | one object's series, drawn small, as its row's preview |

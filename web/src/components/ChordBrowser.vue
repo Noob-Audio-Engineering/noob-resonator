@@ -74,6 +74,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
             <span class="browse__familynote">store what is sounding, recall it by position or by note</span>
           </div>
         </div>
+        <!--
+          **Two routes to the same chord, and only one of them lets go.** A
+          recall writes the voice pitches, so it stands until something else
+          changes them and undo reaches it. A note held on the keyboard only
+          borrows the voices, and lifting your hands gives them back exactly as
+          they were. That is the difference a player feels, so it is said here
+          rather than left to be discovered.
+        -->
+        <p class="slots__how">
+          Recalling one <b>writes the pitches</b> — it stays, and undo reaches it. A note
+          <i>held</i> on the keyboard only borrows the voices, and they come back the moment you let go.
+        </p>
         <div class="slots">
           <div
             v-for="e in slots.slots"
@@ -188,6 +200,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 .chord__semis em { font-style: normal; color: var(--res-faint); margin-left: 3px; }
 .browse__foot { margin: 10px 2px 0; font-size: 11px; color: var(--res-faint); max-width: 70ch; }
 
+.slots__how { margin: 0 2px 6px; font-size: 11px; color: var(--res-faint); max-width: 78ch; }
 .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
 .slot {
   display: flex;
