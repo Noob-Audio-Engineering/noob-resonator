@@ -88,8 +88,26 @@ export function useChords() {
     return [...by.values()];
   });
 
-  /** The semitones the voices are actually at, as many as are sounding. */
-  const live = computed(() => pitches.value.slice(0, sounding.value).map((p) => p.plain));
+  /**
+   * The semitones the voices are actually at, as many as are sounding.
+   *
+   * **Rounded to the precision the parameter declares.** A plain value
+   * round-trips through a normalised float, so a voice set to seven semitones
+   * reads back as `7.0000000000000036` — and that noise was being written into
+   * a stored slot and into a saved project. The engine declares `decimals: 0`
+   * on these, which is not a display preference but a statement that the value
+   * is whole: at that precision the two numbers are the same pitch, and
+   * carrying the difference is carrying a lie about how exactly it is known.
+   *
+   * Rounding here rather than at each caller means the comparison that decides
+   * which chord is showing is exact rather than within a tolerance.
+   */
+  const live = computed(() =>
+    pitches.value.slice(0, sounding.value).map((p) => {
+      const d = p.spec?.decimals;
+      return d == null ? p.plain : Number(p.plain.toFixed(d));
+    }),
+  );
 
   /**
    * The chord the voices are currently at, or `null` for a voicing of the
@@ -117,6 +135,8 @@ export function useChords() {
     count,
     pitches,
     sounding,
+    /** Where the sounding voices are, in semitones. The slots compare against this. */
+    live,
     matching,
     /** What to call the current tuning on the face. */
     label: computed(() => (matching.value ? matching.value.name : 'custom')),
