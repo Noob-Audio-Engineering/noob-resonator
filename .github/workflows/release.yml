@@ -37,7 +37,10 @@ jobs:
             targets: "--target aarch64-apple-darwin --target x86_64-apple-darwin"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.0"
+          components: rustfmt, clippy
       - name: macOS cross targets
         if: matrix.os == 'macos-latest'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -50,7 +53,7 @@ jobs:
       # library compiles or the plug-in ships with no interface.
       - name: Build the page
         working-directory: web
-        run: npm install && npm run build
+        run: npm ci && npm run build
 
       # nih-plug's own bundler rather than a hand-made layout. On Windows the
       # difference is cosmetic; on macOS a `.vst3` is a real bundle with an
