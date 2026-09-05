@@ -120,8 +120,20 @@ function voiceOff(index) {
   };
 }
 
-/** How many voices the keyboard is setting rather than their own controls. */
-const held = computed(() => chords.ids.filter((_, i) => info.voiceSource(i) === 1).length);
+/**
+ * How many voices the keyboard is setting rather than their own controls.
+ *
+ * **Asks whether the object has voices at all, rather than trusting the field
+ * alone.** On the four surfaces there are none, and an engine that handed this
+ * readout the live voicing anyway reported a held note against an object whose
+ * single pitch was still its parameter's — a working control, greyed. The deck
+ * survived that by asking the object first and returning early, which is safe
+ * by ordering rather than by construction; this asks outright so a later reader
+ * cannot reuse the count somewhere the ordering does not protect.
+ */
+const held = computed(() =>
+  off('voices') ? 0 : chords.ids.filter((_, i) => info.voiceSource(i) === 1).length,
+);
 
 /**
  * What the contact controls are called on this object.

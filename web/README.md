@@ -555,18 +555,21 @@ the *boundary* between the two states, not their number: a panel recall writes
 the parameter, so the parameter is in charge and the field should say so; a note
 recall does not, so it should not.
 
-**Until that correction lands, one case is invisible and this paragraph is the
-warning.** A chord recalled *from MIDI* sounds the slot's pitches while
-`voice_source` still reports the parameter, so the deck can show a control as in
-charge when it is not. The fix is ruled and being written; it is recorded here
-anyway, because a fix that is coming is not a fix that has arrived, and this
-page is what protects somebody if it slips.
+**The face was written to the corrected predicate before the engine carried
+it**, the same way the air-column readout stopped claiming a length before the
+field went NaN. Its wording names neither route, so it needed no change when the
+fix landed — and the paragraph that warned about the gap was removed by the
+landing rather than by somebody remembering, which is what a note like that is
+for.
 
-**The face is already written to the corrected predicate**, the same way the
-air-column readout stopped claiming a length before the field went NaN. Its
-wording names neither route, so it is true under both definitions and nothing
-here changes when the engine lands the fix — **except this paragraph, which
-should go with it.**
+**Writing the test for the corrected predicate found a second case nobody had
+looked at**, and it is the one that matters to this page's greying: on the four
+surfaces, which take no voices at all, the readout was handed the live voicing
+whenever MIDI was on — so a held note made `voice_source[0]` report 1 while the
+object's single pitch was still its parameter's. **A working control, greyed.**
+The deck was safe from it by asking the object first and returning early, but
+only the ordering saved it, so the question is now asked explicitly wherever the
+field is read.
 
 ### The browse view — **the sibling lab did this first**
 
