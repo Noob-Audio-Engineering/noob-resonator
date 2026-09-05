@@ -89,12 +89,24 @@ await p.evaluate(async () => {
 });
 await p.waitForTimeout(1500);
 
+const hz = (t) => {
+  const m = (t || '').match(/([\d.]+)\s*(k?)Hz/);
+  return m ? Number(m[1]) * (m[2] === 'k' ? 1000 : 1) : null;
+};
+
 const marking = () =>
-  p.evaluate(() => ({
-    label: document.querySelector('.g-held text')?.textContent?.trim() || null,
-    dashed: document.querySelectorAll('.g-handles line.held').length,
-    note: document.querySelector('.md__prov.is-note')?.textContent?.trim() || null,
-  }));
+  p.evaluate(() => {
+    const cut = [...document.querySelectorAll('.g-cut text')].map((t) => t.textContent.trim());
+    const tip = document.querySelector('.g-handles line.held title')?.textContent || '';
+    return {
+      label: document.querySelector('.g-held text')?.textContent?.trim() || null,
+      dashed: document.querySelectorAll('.g-handles line.held').length,
+      note: document.querySelector('.md__prov.is-note')?.textContent?.trim() || null,
+      wall: cut[0] || null,
+      wallSub: cut[1] || null,
+      stackTip: tip,
+    };
+  });
 
 // --- the pile, made rather than hoped for ---------------------------------
 await setLfo(true);
@@ -103,14 +115,39 @@ await drive('Rate', 'End');
 await drive('Tune', 'End');
 await p.waitForTimeout(1500);
 
+/**
+ * The wall and the stack are two true statements that sometimes land on one
+ * line, and each frame has to be self-consistent about which case it is in.
+ *
+ * Checked on every sampled frame rather than by catching the rare state by
+ * hand: when the top of the bank *is* the clamp, both captions have to say so;
+ * when they are different frequencies — the ordinary case — neither may claim
+ * they coincide.
+ */
 let seen = null;
-for (let i = 0; i < 400; i++) {
+let coincided = null;
+let apart = 0;
+for (let i = 0; i < 800; i++) {
   const m = await marking();
   if (m.label) {
-    seen = m;
-    break;
+    if (!seen) seen = m;
+    const together = m.wall != null && hz(m.wall) != null && hz(m.stackTip) != null &&
+      Math.abs(hz(m.wall) - hz(m.stackTip)) <= hz(m.stackTip) * 0.001;
+    const saysTogether = /held partials are on it/.test(m.wallSub || '') ||
+      /same line the bank stops at/.test(m.note || '');
+    if (together && !saysTogether) {
+      fail(`the wall and the stack are both at ${hz(m.stackTip)} Hz and neither caption says so`);
+      break;
+    }
+    if (!together && saysTogether) {
+      fail(`the captions claim one line while the wall is at ${hz(m.wall)} and the stack at ${hz(m.stackTip)}`);
+      break;
+    }
+    if (together) coincided = m;
+    else apart++;
+    if (coincided && apart) break;
   }
-  await p.waitForTimeout(25);
+  await p.waitForTimeout(20);
 }
 if (!seen) {
   fail('the series never piled up at the ceiling, so nothing was marked and nothing was tested');
@@ -124,6 +161,14 @@ if (!seen) {
   if (seen.dashed !== n) fail(`${n} counted but ${seen.dashed} drawn as held`);
   if (!seen.note || !/ceiling|alias/.test(seen.note)) fail('the stack is drawn but not explained');
   else ok('and the line under the plot says why they are there');
+
+  if (coincided) {
+    console.log(`  together: ${coincided.wallSub}`);
+    ok('when the top of the bank is the clamp, both captions say the two are one line');
+  } else {
+    console.log('  (no frame caught where the wall and the stack were the same line)');
+  }
+  if (apart) ok(`and in ${apart} frames where they were different lines, neither claimed otherwise`);
 }
 
 // --- and at rest, nothing at all -------------------------------------------

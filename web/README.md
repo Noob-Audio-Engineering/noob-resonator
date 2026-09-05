@@ -703,6 +703,17 @@ it was. They are neither dropped nor drawn as ordinary partials, because both
 are false pictures: one by omission, one by making twenty look like one. The
 stack is dashed and counted, and a line under the plot says why they are there.
 
+**And when the wall lands on the same line, both captions say so.** The bank's
+ceiling and the clamp are two true statements about one frequency, and they
+sometimes fall together — at which point a reader seeing one line and two
+unrelated reasons concludes something is broken. So the wall's second line
+becomes *nothing at all above this line — and the 19 held partials are on it*,
+and the stack's sentence ends *and that is the same line the bank stops at*.
+**Only when they genuinely coincide**; the ordinary case is two different
+frequencies and two separate statements, and neither may claim otherwise. This
+does not second-guess `ceiling_hz`: the field stays the authority, and the page
+is observing that its value equals a frequency it already detects on its own.
+
 **How they are recognised is the part worth keeping.** Testing the frequency
 against Nyquist found nothing — the clamp sits at 23.52 kHz on a 24 kHz band,
 so a threshold tight enough to mean "at the ceiling" missed every one, and one

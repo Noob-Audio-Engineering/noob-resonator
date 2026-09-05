@@ -366,12 +366,34 @@ const cut = computed(() => {
   if (!hz || hz <= 0) return null;
   const x = xHz(hz);
   const flip = W.value - PAD.r - x < 150;
+  /**
+   * Whether the wall and the held partials are the same line.
+   *
+   * **Two true explanations for one line is one more than a reader wants, and
+   * the resolution is not to suppress either — their coinciding is itself the
+   * fact.** `ceiling_hz` is the top of what the bank runs; the clamp is where
+   * the partials pushed past Nyquist actually sound; and when the top of the
+   * bank *is* the clamp they fall together. A reader who sees one line and two
+   * unrelated reasons concludes something is broken. One told the two have
+   * landed on each other learns what state they are in.
+   *
+   * **This does not second-guess `ceiling_hz`.** The field stays the
+   * authority: the page is observing that its value equals a frequency it
+   * already detects independently, and saying so. When they do not coincide —
+   * the ordinary case — both captions stand as they are.
+   */
+  const st = ceilingStack.value;
+  const withStack = st != null && Math.abs(st.hz - hz) <= hz * 0.001;
   return {
     x,
     hz,
+    withStack,
     anchor: flip ? 'end' : 'start',
     tx: flip ? x - 5 : x + 5,
     label: `nothing above ${hzText(hz)} · ${info.used} modes, ${r.select ? r.select.label : ''}`,
+    sub: withStack
+      ? `nothing at all above this line — and the ${st.count} held partials are on it`
+      : 'nothing at all above this line',
   };
 });
 
@@ -624,11 +646,13 @@ const engineDisagrees = computed(() => {
 const readCarefully = computed(() => {
   const st = ceilingStack.value;
   if (!st) return [];
+  const together = cut.value?.withStack;
   return [
     `${st.count} partials are sharing one frequency at ${hzText(st.hz)}` +
       (st.ceiling ? `, just under the ${hzText(st.ceiling)} ceiling` : '') +
       ' — the engine holds a partial there rather than letting it alias, so those are drawn where they' +
-      ' sound rather than where the object puts them',
+      ' sound rather than where the object puts them' +
+      (together ? ', and that is the same line the bank stops at' : ''),
   ];
 });
 
@@ -870,7 +894,7 @@ const tip = (p) =>
           <rect :x="cut.x" :y="geom.levelTop" :width="Math.max(0, W - PAD.r - cut.x)" :height="geom.levelH" />
           <line :x1="cut.x" :y1="geom.levelTop" :x2="cut.x" :y2="geom.levelBottom" />
           <text :x="cut.tx" :y="geom.levelTop + 11" :text-anchor="cut.anchor">{{ cut.label }}</text>
-          <text :x="cut.tx" :y="geom.levelTop + 23" :text-anchor="cut.anchor" class="sub">nothing at all above this line</text>
+          <text :x="cut.tx" :y="geom.levelTop + 23" :text-anchor="cut.anchor" class="sub">{{ cut.sub }}</text>
         </g>
 
         <g v-if="geom.hasRing && ringPath" class="g-ring" :class="object.engine">

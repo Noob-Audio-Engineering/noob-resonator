@@ -165,9 +165,18 @@ object's ratios put it. Several arrive at once and land on the same pixel,
 which drew as one bright partial at the top of the series instead of the twenty
 it was.
 
-Two cases, and the second keeps the first honest: with the oscillator pitching a
-dense object up, the stack should be marked, dashed and counted; **with it off
-and the object at rest, nothing should be marked at all.**
+Four cases, and the ones that keep the first honest are the rest: with the
+oscillator pitching a dense object up, the stack should be marked, dashed and
+counted; **with it off and the object at rest, nothing should be marked at
+all**; when the bank's ceiling and the clamp fall on one frequency both captions
+must say so; and when they are different frequencies neither may claim they
+coincide. The last two are checked on every sampled frame rather than by
+catching the rare state by hand.
+
+**It sets up its own conditions.** The first version assumed the oscillator was
+already on from whatever had been done to the plug-in beforehand, and against a
+freshly started one it reported "no stack" — which is the answer a broken
+marking would also give.
 
 **The detection is the interesting part.** Testing `hz` against Nyquist found
 nothing — the clamp sits at 23.52 kHz on a 24 kHz band, so a threshold tight
