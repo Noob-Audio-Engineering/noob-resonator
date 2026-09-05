@@ -638,6 +638,40 @@ non-finite value is how an engine says *not computed*: the page's field reader
 turns it into an absence and the readout that wanted it goes dark. A real zero
 still survives, because zero is a measurement.
 
+**And then the same insight arrived from the engine's side and inverted the
+message.** Once every `info` field that does not apply publishes `NaN` — the
+air-column fields on a mode bank, the bank fields on an air column, the
+limiter's reduction when it is off, `ceiling_hz` when the bank holds every
+partial an object has — the page's reader could no longer tell *absent* from
+*present and not applicable*, because it collapsed both into `null`. So the
+display announced **the best state this device reaches** as a fault: on a
+string holding all ninety of its partials there is no wall because nothing was
+thrown away, and the provenance line read *no ceiling_hz, so where the bank
+runs out is not marked*. A reader takes that for a broken build.
+
+**The fix is a second question, not a different answer.** `fieldAt` still
+collapses — that is right for anything drawing a number — and `declares` asks
+the layout whether the field exists at all. Only an undeclared field is a gap;
+a declared field with no value is the engine answering, and the answer gets its
+own sentence in ordinary ink: *no wall — the bank has every partial this object
+has*. The bench carries all three states in full, and says **why** a bank field
+is unset, because on an air column the crossover and the ceiling are not
+"nothing fused" and "no wall" but questions that do not apply. The stand-in
+publishes `NaN` for the same fields the engine does, so design mode cannot
+teach a lesson live mode contradicts.
+
+**A count that cannot be a count is not printed.** With the fundamental driven
+to 1.2 Hz the engine had more partials under Nyquist than a `usize` could hold
+and published `modes_available` as an unsigned underflow; the strip rendered it
+faithfully as *this object has 18446744073709552.0 k partials*. So the
+absent-not-plausible rule carries one step further for the fields that are
+counts of things: finite, whole, not negative, and inside 2²⁴, past which a
+float no longer spaces integers one apart. **Refusing it quietly would have
+been the same mistake in a different coat**, so the strip says which field it
+refused and why the figures above it are blank. The engine bounds its own
+search now, and where a count sits exactly on that bound the strip says *at
+least*, because a bound is a floor and not a total.
+
 **A control that does nothing says so.** The clamped disc's mode shape needs a
 modified Bessel function, which is exactly the machinery that left this
 directory, so design mode does not model it: Hit and the two pickups do nothing
@@ -780,13 +814,14 @@ designing is not quietly wrong.
 | file | what |
 |---|---|
 | `objects.js` | the catalogue: ten objects, what each is, what it is for, and the equation its series is cited from. No arithmetic. |
-| `streams.js` | reading a stream by the names it declares, and the rule that a non-finite value means *not computed*. No framework imports, so it can be tested. |
+| `streams.js` | reading a stream by the names it declares; that a non-finite value means *not computed or not applicable*, that only an undeclared field is a gap, and that a number which cannot be a count is not read as one. No framework imports, so it can be tested. |
 | `previews.js` | forty ratios per object for the browse view's rows, **generated from the engine**; rebuild with `npm run previews`. |
 | `dev/series-table.js` | **dev only** — the same numbers with their mode indices, for the design-mode stand-in to walk. Generated, never hand-edited. |
 | `tools/gen-previews.mjs` | writes both, out of `benchmark --dump series`; refuses if the catalogue and the engine disagree about which objects exist, or if the dump is not in frequency order |
 | `tools/page-sweep.mjs` | every view at every size, and the built bundle — `npm run sweep` |
 | `tools/preset-e2e.mjs` | presets against a running plug-in, which is the only place they prove anything — `npm run presets:e2e` |
 | `tools/extremes.mjs` | every control at both ends on every object, and whether the instrument comes back — `npm run extremes` |
+| `tools/contract.mjs` | the live manifest against every claim the panel makes on screen; no browser — `npm run contract` |
 | `composables/useResonator.js` | the parameter handles, the four streams read by field name, the override table, the published `uses` lookup, `WINDOW_MIN`. No physics. |
 | `dev/manifest.js` | **dev only** — the contract, and the stand-in that fills the four streams so the page renders without a plug-in |
 | `dev/physics/` | **dev only** — the mode shapes and the two laws applied over the engine's series table. No root-finding and no special functions: those are the engine's. |

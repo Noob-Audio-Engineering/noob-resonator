@@ -445,6 +445,13 @@ body {
 .md__prov { margin: 3px 0 0; font-size: 10px; color: var(--res-warn); opacity: 0.8; }
 /* A missing field is a gap; the two halves disagreeing is a fault, and reads like one. */
 .md__prov.is-fault { color: var(--res-null); opacity: 1; font-weight: 600; }
+/*
+ * The same line, for the case where there is nothing to draw because nothing
+ * went wrong. Ordinary ink: "no wall — the bank has every partial this object
+ * has" is the device working, and printing it in the warning colour was how a
+ * user came to read the best state as a broken build.
+ */
+.md__prov.is-fine { color: var(--res-dim); opacity: 1; font-weight: 400; }
 
 /* --------------------------------------------------------------------------
  * The deck

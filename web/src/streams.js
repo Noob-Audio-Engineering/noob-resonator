@@ -25,16 +25,41 @@ export function parseLayout(layout) {
 }
 
 /**
+ * Whether a stream declares a field at all.
+ *
+ * **Not the same question as whether it has a value, and the difference is a
+ * sentence on the face.** [`fieldAt`] deliberately collapses three cases into
+ * `null`, which is right for anything that draws a number and wrong for
+ * anything that explains why there is not one:
+ *
+ * * the build has no such field — a gap, and worth reporting as one;
+ * * the field is declared and the engine published a non-finite value — which
+ *   usually means *this does not apply*, and is a correct state rather than a
+ *   fault.
+ *
+ * Collapsing them printed the good case as a fault. On a string holding every
+ * partial it has there is no wall to draw, so the engine publishes `NaN` for
+ * `ceiling_hz` — and the display announced *no ceiling_hz, so where the bank
+ * runs out is not marked*, which a reader takes for a broken build. The truth
+ * was that nothing had been thrown away. This is how a reader tells the two
+ * apart: the layout says what exists, the frame says what was computed.
+ */
+export const declares = (layout, name) => layout?.index?.[name] != null;
+
+/**
  * One field out of a frame, by name, or `null`.
  *
- * `null` for three different reasons that mean the same thing to a reader:
+ * `null` for three different reasons that mean the same thing *to a number*:
  * the build does not declare the field, no frame has arrived, or the engine
- * published a non-finite value for it.
+ * published a non-finite value for it. Ask [`declares`] when the difference
+ * matters, which is whenever the panel is about to explain the absence rather
+ * than draw around it.
  *
- * **A non-finite value is how an engine says "not computed".** A real zero
- * and an uncomputed zero are otherwise indistinguishable to a panel, which is
- * how the level meter once reported `0.0 dB GR` for a measurement nothing had
- * made. An unset field must be absent, not plausible.
+ * **A non-finite value is how an engine says "not computed" or "not
+ * applicable".** A real zero and an uncomputed zero are otherwise
+ * indistinguishable to a panel, which is how the level meter once reported
+ * `0.0 dB GR` for a measurement nothing had made. An unset field must be
+ * absent, not plausible.
  *
  * @param {ArrayLike<number>|null} frame
  * @param {{ index: Record<string, number> }} layout

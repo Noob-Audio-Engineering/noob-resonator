@@ -383,7 +383,7 @@ function build() {
   const info = new Float32Array(INFO_LEN).fill(NaN);
   const put = (name, v) => {
     const i = INFO_LAYOUT.indexOf(name);
-    if (i >= 0) info[i] = v;
+    if (i >= 0 && Number.isFinite(v)) info[i] = v;
   };
   put('modes_used', audible.length);
   // **Only when it is a count rather than a table length.** The stand-in walks
@@ -392,15 +392,24 @@ function build() {
   // anything about the object. Left unset, the panel reads "not computed" —
   // which is true — instead of drawing a ceiling this file invented.
   if (allPartialsCounted(s)) put('modes_available', available.length);
-  put('crossover_hz', drawn.length > resolvable(s.object) ? drawn[resolvable(s.object)].hz : 0);
-  put('column_m', facts.metres);
-  put('loop_ms', facts.loopS * 1000);
+  // **Every field that does not apply is left unset**, which is the engine's
+  // contract: NaN reads as *not applicable*, and the frame is NaN-filled
+  // already. Publishing a plausible zero for a bank's bore or for a crossover
+  // that nothing crossed is the same fault as the zero-filled frame, arriving
+  // from the other direction.
+  if (drawn.length > resolvable(s.object)) put('crossover_hz', drawn[resolvable(s.object)].hz);
+  if (s.engine === 'waveguide') {
+    put('column_m', facts.metres);
+    put('loop_ms', facts.loopS * 1000);
+  }
   put('engine', s.engine === 'waveguide' ? 1 : 0);
   // The stand-in has no incremental mode search, so its table is always settled.
   put('build', 1);
   put('f0_hz', s.f0);
-  // Zero when the bank has every partial the object has: no wall to draw,
-  // rather than no data.
+  // **Unset when the bank has every partial the object has**: no wall to draw,
+  // which is the best state the device reaches and not the absence of one.
+  // `put` drops a non-finite value, so the field stays NaN and the panel says
+  // *no wall* in ordinary ink rather than reporting a missing feed.
   put('ceiling_hz', ceilingHz(s, available, audible));
 
   // The engine publishes a response for both engines — `engine.rs` takes it

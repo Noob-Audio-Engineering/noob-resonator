@@ -54,6 +54,32 @@ const peak = computed(() =>
   modes.list.reduce((m, p) => Math.max(m, p.bareDb ?? p.dbL ?? -Infinity), -Infinity),
 );
 const uses = computed(() => meta.value?.uses || null);
+/**
+ * One `info` field, in the three states it actually has.
+ *
+ * **"Not declared" and "declared and not applicable" are different answers**
+ * and this is the one table where both belong in full. A build that has no
+ * `ceiling_hz` cannot be asked where the bank runs out; a build that publishes
+ * NaN for it has answered, and the answer is that nothing was thrown away.
+ * Collapsing the two printed the good state as a missing feed.
+ */
+/**
+ * Why a bank field is unset, which depends on what is loaded.
+ *
+ * On an air column the crossover and the ceiling are not "nothing fused" and
+ * "no wall" — they are questions that do not apply, because there is no mode
+ * budget to run out of and no bank whose partials could fuse. Answering a
+ * question nobody asked of this object is a smaller version of the same fault
+ * as reporting the good state as a fault.
+ */
+const bankField = (whenBank) => (object.value.engine === 'waveguide' ? 'not a mode bank' : whenBank);
+
+const field = (name, value, whenUnset, fmt = null) => {
+  if (!info.declares(name)) return 'not published';
+  if (value == null) return whenUnset;
+  return fmt ? fmt(value) : hzText(value);
+};
+
 const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
 </script>
 
@@ -101,8 +127,11 @@ const state = (s) => (!s.has ? 'absent' : s.live ? 'live' : 'declared, silent');
             <tr><td>partials available</td><td>{{ countText(info.available) }}</td></tr>
             <tr><td>modes the bank runs</td><td>{{ countText(info.used) }}</td></tr>
             <tr><td>drawn in the display</td><td>{{ modes.list.length }}</td></tr>
-            <tr><td>crossover</td><td>{{ hzText(info.crossoverHz) }}</td></tr>
-            <tr><td>ceiling</td><td>{{ info.ceilingHz == null ? 'not published' : info.ceilingHz > 0 ? hzText(info.ceilingHz) : 'none' }}</td></tr>
+            <tr><td>crossover</td><td>{{ field('crossover_hz', info.crossoverHz, bankField('nothing fused')) }}</td></tr>
+            <tr><td>ceiling</td><td>{{ field('ceiling_hz', info.ceilingHz, bankField('no wall')) }}</td></tr>
+            <tr><td>column</td><td>{{ field('column_m', info.columnM, 'not an air column', (v) => `${v.toFixed(3)} m`) }}</td></tr>
+            <tr><td>loop</td><td>{{ field('loop_ms', info.loopMs, 'not an air column', (v) => `${v.toFixed(2)} ms`) }}</td></tr>
+            <tr><td>limiter reduction</td><td>{{ field('limit_gr_db', info.limitGrDb, 'limiter off', (v) => `${v.toFixed(2)} dB`) }}</td></tr>
             <tr><td>mode table</td><td>{{ info.build == null ? '—' : info.build >= 0.999 ? 'settled' : Math.round(info.build * 100) + '%' }}</td></tr>
             <tr><td>overrides</td><td>{{ overrides.count || 'none' }}</td></tr>
           </tbody>

@@ -229,14 +229,20 @@ export function loudest(list, n = PUBLISHED, edited = null) {
  * The top of what the bank is running, when the bank ran out before the axis
  * did — the frequency above which the object has nothing at all.
  *
- * Zero when there is no wall, which is what the panel reads as "none".
+ * **`NaN` when there is no wall**, which is the engine's contract and reads as
+ * *not applicable*: an air column has no budget to run out of, and a bank
+ * holding every partial its object has threw nothing away. It used to be zero
+ * here, which was the old contract and is exactly the design-versus-live
+ * divergence this directory exists not to have — a stand-in that publishes a
+ * plausible number where the engine publishes an absence teaches the panel the
+ * wrong lesson in the one mode where nobody can check it against anything.
  */
 export function ceilingHz(s, available, audible) {
-  if (!audible.length) return 0;
-  if (objectById(s.object).engine === 'waveguide') return 0;
-  if (audible.length >= available.length) return 0;
+  if (!audible.length) return NaN;
+  if (objectById(s.object).engine === 'waveguide') return NaN;
+  if (audible.length >= available.length) return NaN;
   const top = audible[audible.length - 1].hz;
-  return top > s.nyquist * 0.92 ? 0 : top;
+  return top > s.nyquist * 0.92 ? NaN : top;
 }
 
 /**

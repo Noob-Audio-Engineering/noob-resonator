@@ -32,10 +32,10 @@ import {
   useWindowSize,
 } from '@noob-audio-engineering/noob-vst-webgui-framework/vue';
 import { objectAt } from '../objects.js';
-import { countAt, fieldAt, isCount, parseLayout } from '../streams.js';
+import { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js';
 
 export { getClient, hasParam, hasStream, useParam, useNoobVstWebguiFramework, useStoredRef };
-export { countAt, fieldAt, isCount, parseLayout } from '../streams.js';
+export { countAt, declares, fieldAt, isCount, parseLayout } from '../streams.js';
 
 /** Smallest window the panel lays out in, `[width, height]` CSS pixels; the Rust side will clamp to the same. */
 export const WINDOW_MIN = [900, 520];
@@ -347,8 +347,15 @@ export function inactive(id, object, meta) {
 // The per-mode override table
 // ---------------------------------------------------------------------------
 
-/** What an override may ask for, matching the engine's own clamps. */
-export const EDIT_LIMITS = { cents: 1200, db: 60, decayMin: 0.1, decayMax: 10 };
+/**
+ * What an override may ask for, matching the engine's own clamps.
+ *
+ * **Two octaves of pitch, not one.** The engine widened it for a concrete
+ * reason: putting a string's third partial onto a bell's tierce is 1,586 cents
+ * down, so an octave was not enough room to build an object nobody has
+ * shipped — which is the whole argument for having a per-partial table at all.
+ */
+export const EDIT_LIMITS = { cents: 2400, db: 60, decayMin: 0.1, decayMax: 10 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const neutral = (e) => !e || (!e.cents && !e.db && (e.decay == null || Math.abs(e.decay - 1) < 1e-9));
@@ -512,6 +519,19 @@ export function useInfo() {
     has,
     live: computed(() => frame.value != null),
     names: layout.index,
+    /**
+     * Whether this build declares a field at all — which is a different
+     * question from whether it has a value for it.
+     *
+     * **Every readout that explains an absence has to ask this one instead.**
+     * A field that is declared and non-finite is the engine saying *this does
+     * not apply*: an air column has no crossover, a mode bank has no bore, a
+     * limiter that is off took nothing off, and a bank holding every partial
+     * an object has leaves no wall to draw. Those are correct states and the
+     * best ones, and reporting them as missing fields reads as a broken build.
+     * Only an undeclared field is a gap.
+     */
+    declares: (name) => declares(layout, name),
     /**
      * Count fields the engine published that cannot be counts.
      *

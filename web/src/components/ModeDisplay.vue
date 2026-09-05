@@ -545,6 +545,30 @@ const engineDisagrees = computed(() => {
   return (info.engineIx >= 0.5 ? 'waveguide' : 'modal') !== object.value.engine;
 });
 
+/**
+ * What the display is *not* drawing because there is nothing to draw — which
+ * is a different sentence from what it cannot draw.
+ *
+ * Ordinary ink, not the fault colour. "No wall" on a bank that holds every
+ * partial its object has is the device working, and the readout that says so
+ * is the one worth reading.
+ */
+const notApplicable = computed(() => {
+  const out = [];
+  if (!info.live) return out;
+  if (!guide.value && info.declares('ceiling_hz') && info.ceilingHz == null) {
+    out.push('no wall — the bank has every partial this object has');
+  }
+  // Only on a mode bank. The engine publishes NaN for `crossover_hz` on an air
+  // column because it is a bank field that does not apply there — which is not
+  // the same statement as "nothing is fused", and putting the bank's sentence
+  // on a waveguide would be the panel answering a question nobody asked of it.
+  if (!guide.value && info.declares('crossover_hz') && info.crossoverHz == null && modes.list.length) {
+    out.push('nothing is fused — every partial drawn is one the ear can still separate');
+  }
+  return out;
+});
+
 const missing = computed(() => {
   const out = [];
   if (engineDisagrees.value) {
@@ -559,10 +583,17 @@ const missing = computed(() => {
   if (!info.live) {
     out.push('no info stream, so the ceiling and the crossover are not marked');
   } else {
-    if (info.ceilingHz == null) {
+    // **Declared and non-finite is not missing.** The engine publishes NaN for
+    // every field that does not apply, so a bank holding every partial an
+    // object has leaves `ceiling_hz` unset — there is no wall because nothing
+    // was thrown away, which is the best state this device reaches. Reported
+    // as an absent field it read as a broken build, on the one screen a user
+    // is most likely to screenshot. Only a field the layout never declares is
+    // a gap.
+    if (!info.declares('ceiling_hz')) {
       out.push('no ceiling_hz, so where the bank runs out is not marked');
     }
-    if (info.crossoverHz == null) out.push('no crossover_hz, so nothing is drawn as fused');
+    if (!info.declares('crossover_hz')) out.push('no crossover_hz, so nothing is drawn as fused');
   }
   if (modes.live && !modes.hasBare) out.push('no db_bare, so the energy a node removed is not shown');
   return out;
@@ -791,6 +822,9 @@ const tip = (p) =>
 
     <p v-if="showProv && missing.length" class="md__prov" :class="{ 'is-fault': engineDisagrees }">
       {{ missing.join(' · ') }}.
+    </p>
+    <p v-if="showProv && !missing.length && notApplicable.length" class="md__prov is-fine">
+      {{ notApplicable.join(' · ') }}.
     </p>
   </section>
 </template>

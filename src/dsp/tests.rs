@@ -1479,6 +1479,198 @@ fn a_walk_is_ordered_within_a_column_and_covers_the_object() {
 }
 
 #[test]
+fn a_state_the_search_cannot_finish_does_not_wedge_the_instrument() {
+    // **The worst bug of the build, found live by the panel agent.** Choose a
+    // Membrane, drive Tune, Transpose and Fine each to its minimum so the
+    // fundamental sits at 1.21 Hz, then load a preset. The device did not come
+    // back: the object read String while the display still drew `Mode (1, 1)`,
+    // a two-index mode a string does not have, and no parameter would bring it
+    // round. Reloading the project was the only way out.
+    //
+    // Two faults, and it took both. At 1.21 Hz a membrane has of the order of
+    // a hundred million partials under Nyquist, so the incremental search set
+    // itself a task it could not finish. And the restart was written
+    // `needs_rebuild(&req) && !searching()`, so every settings change that
+    // arrived during a search was dropped — which, for a search that never
+    // ended, meant every change for the rest of the session.
+    //
+    // So this drives the state and then changes the object, and asserts the
+    // instrument is the new one and rings. It fails on either fault alone.
+    let (bridge, ix) = build_bridge("noob-resonator-wedge", SR);
+    let audio = bridge.take_audio().expect("audio handle");
+    let set_p = |id: &str, v: f32| {
+        let i = bridge
+            .index_of(id)
+            .unwrap_or_else(|| panic!("no parameter `{id}`"));
+        bridge.set_param(i, v);
+    };
+    let mut e = Resonator::new(SR);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    let mut run = |e: &mut Resonator, n: usize| {
+        for _ in 0..n {
+            let s = read_settings(&audio, &ix);
+            e.configure(&s);
+            l.fill(0.0);
+            r.fill(0.0);
+            e.process(&mut l, &mut r);
+        }
+    };
+
+    // A surface, with every pitch control at its minimum.
+    set_p("type", 3.0);
+    set_p("tune", 20.0);
+    set_p("transpose", -48.0);
+    set_p("fine", -50.0);
+    run(&mut e, 40);
+
+    // Then a preset, applied one parameter at a time the way the page applies
+    // it, so the engine passes through the same intermediate states a user
+    // does rather than being handed the answer in one step.
+    let nylon = preset::factory()
+        .into_iter()
+        .find(|p| p.name == "Nylon")
+        .expect("the Nylon preset");
+    for (id, v) in preset::settings_values(&nylon.settings) {
+        set_p(&id, v.as_f64().expect("a plain value") as f32);
+        run(&mut e, 1);
+    }
+    run(&mut e, 400);
+
+    // It is the object the parameters say it is.
+    let f = e.info_frame();
+    assert_eq!(
+        f[10], 1.0,
+        "the mode search never settled: build at {}",
+        f[10]
+    );
+    assert!(
+        (f[11] - 196.0).abs() < 1.0,
+        "the fundamental is {} Hz and the preset asks for 196",
+        f[11]
+    );
+    let info = e.bank().info();
+    assert!(!info.is_empty(), "the bank is empty, so nothing can ring");
+    assert!(
+        info.iter().all(|m| m.j == 0),
+        "a string has no two-index partials, and the bank holds {:?}",
+        info.iter()
+            .find(|m| m.j != 0)
+            .map(|m| (m.i, m.j, m.hz))
+            .unwrap()
+    );
+    assert!(
+        (info[0].hz - 196.0).abs() < 1.0,
+        "the lowest partial is at {} Hz, not the string's own 196",
+        info[0].hz
+    );
+
+    // And it rings: a strike comes back out, rather than the silence of a
+    // bank that was never rebuilt.
+    let mut sl = vec![0.0f32; SR as usize / 2];
+    let mut sr = vec![0.0f32; SR as usize / 2];
+    sl[0] = 1.0;
+    sr[0] = 1.0;
+    e.process(&mut sl, &mut sr);
+    let tail = &sl[SR as usize / 8..];
+    let peak = tail.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(
+        peak > 1.0e-4,
+        "an eighth of a second after the strike the loudest sample is {peak:e}"
+    );
+}
+
+#[test]
+fn a_settings_change_during_a_search_is_not_dropped() {
+    // The half of the wedge that is a fault on its own terms, isolated: a
+    // change arriving mid-search used to be ignored until that search
+    // finished, so the engine went on answering a question nobody had asked
+    // since. This starts a long search, changes the object one block in —
+    // long before it could finish — and asserts the engine followed.
+    let long = Settings {
+        object: 3,
+        tune_hz: 20.0,
+        transpose: -48.0,
+        fine_cents: -50.0,
+        ..Settings::default()
+    };
+    let mut e = Resonator::new(SR);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    e.configure(&long);
+    e.process(&mut l, &mut r);
+    assert!(
+        e.info_frame()[10] < 1.0,
+        "this state was supposed to take many blocks and settled at once"
+    );
+
+    let short = Settings {
+        object: 2,
+        tune_hz: 196.0,
+        ..Settings::default()
+    };
+    e.configure(&short);
+    for _ in 0..40 {
+        e.process(&mut l, &mut r);
+    }
+    let f = e.info_frame();
+    assert_eq!(f[10], 1.0, "the search did not restart on the new settings");
+    assert!(
+        e.bank().info().iter().all(|m| m.j == 0),
+        "the bank still holds the abandoned search's two-index modes"
+    );
+}
+
+#[test]
+fn a_control_moving_every_block_still_lets_the_bank_follow() {
+    // The failure the fix could have become. Abandoning a search whose
+    // settings have changed is right, and abandoning on *every* block is a
+    // second way to never finish one: under host automation the settings move
+    // continuously, and a bank frozen on its old set looks exactly like a
+    // bank that is following. So the abandoning is capped, and this is what
+    // the cap is for — Tune swept a little every block, for longer than any
+    // single search takes, with the bank required to have moved to the new
+    // pitch by the end of it.
+    let mut e = Resonator::new(SR);
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    let base = Settings {
+        object: 3,
+        tune_hz: 110.0,
+        ..Settings::default()
+    };
+    e.configure(&base);
+    for _ in 0..400 {
+        e.process(&mut l, &mut r);
+    }
+    let first = e.bank().info()[0].hz;
+    assert!(
+        (first - 110.0).abs() < 1.0,
+        "the bank did not settle on the starting pitch, it is at {first}"
+    );
+
+    // Now move it, every single block, over a full octave.
+    let mut hz = 110.0f32;
+    for _ in 0..600 {
+        hz *= 1.0011;
+        e.configure(&Settings {
+            tune_hz: hz,
+            ..base
+        });
+        e.process(&mut l, &mut r);
+    }
+    let moved = e.bank().info()[0].hz;
+    assert!(
+        (moved - hz).abs() < 0.05 * hz,
+        "Tune reached {hz:.1} Hz and the bank's lowest partial is still at {moved:.1}"
+    );
+    assert!(
+        e.info_frame()[10] > 0.0,
+        "the search made no progress at all while the control was moving"
+    );
+}
+
+#[test]
 fn no_setting_publishes_a_partial_count_that_cannot_be_one() {
     // Found live by the panel agent, driving every control to both ends: a
     // string at negative Inharm published 18,446,744,073,709,551,615
@@ -2599,53 +2791,4 @@ fn a_clamped_plate_is_held_flat_at_its_rim() {
             "clamped plate mode ({m},{n}) integrates to {mean}"
         );
     }
-}
-
-#[test]
-fn scratch_wedge() {
-    // res-face's repro: Membrane with all three pitch controls at minimum,
-    // then a preset applied one parameter at a time through a real bridge.
-    let (bridge, ix) = build_bridge("noob-resonator-wedge", SR);
-    let mut e = Resonator::new(SR);
-    let mut a = vec![0.0f32; bank::BLOCK];
-    let mut b = vec![0.0f32; bank::BLOCK];
-    let specs = param_specs(false);
-    let audio = bridge.take_audio().expect("audio handle");
-    let set_p = |id: &str, v: f32| {
-        let i = bridge.index_of(id).unwrap();
-        bridge.set_param(i, v);
-    };
-    let mut run = |e: &mut Resonator, n: usize| {
-        for _ in 0..n {
-            let s = read_settings(&audio, &ix);
-            e.configure(&s);
-            e.process(&mut a, &mut b);
-        }
-    };
-    set_p("type", 3.0);
-    set_p("tune", 20.0);
-    set_p("transpose", -48.0);
-    set_p("fine", -50.0);
-    run(&mut e, 200);
-    let f = e.info_frame();
-    println!("after membrane minimum: build={} used={} avail={} f0={}", f[10], f[0], f[1], f[11]);
-
-    // Now the preset, one parameter at a time, the way the page applies it.
-    let nylon = preset::factory().into_iter().find(|p| p.name == "Nylon").unwrap();
-    let vals = preset::settings_values(&nylon.settings);
-    for spec in &specs {
-        if let Some(v) = vals.get(&spec.id) {
-            set_p(&spec.id, v.as_f64().unwrap() as f32);
-            run(&mut e, 1);
-        }
-    }
-    run(&mut e, 400);
-    let f = e.info_frame();
-    let peak = a.iter().chain(b.iter()).fold(0.0f32, |m, x| m.max(x.abs()));
-    println!(
-        "after nylon: build={} used={} avail={} f0={} ceiling={} peak={peak:e}",
-        f[10], f[0], f[1], f[11], f[12]
-    );
-    let info = e.bank().info();
-    println!("  first modes: {:?}", info.iter().take(4).map(|m| (m.i, m.j, m.hz)).collect::<Vec<_>>());
 }

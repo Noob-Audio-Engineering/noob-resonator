@@ -45,7 +45,16 @@ const bars = computed(() => [
   { k: 'out', label: 'out', l: pos(meter.held.out_l), r: pos(meter.held.out_r) },
 ]);
 
-/** The limiter's gain reduction, when the engine publishes it. Zero is not "working". */
+/**
+ * The limiter's gain reduction, when the engine has one to report.
+ *
+ * **Zero is not "working" and absent is not zero.** The engine publishes NaN
+ * for this while the limiter is off, so the readout disappears rather than
+ * sitting at `0.0 dB GR` — which is what it did when the field was zero-filled,
+ * reporting a measurement nothing had made. Hidden rather than explained is
+ * the right shape here: the strip is four characters wide and a missing bar
+ * beside a live one says everything a sentence would.
+ */
 const gr = computed(() => (info.limitGrDb == null ? null : Math.abs(info.limitGrDb)));
 </script>
 

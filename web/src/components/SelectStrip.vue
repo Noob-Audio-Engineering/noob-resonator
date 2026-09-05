@@ -52,6 +52,32 @@ const word = computed(() => {
 const wall = computed(() => (info.ceilingHz && info.ceilingHz > 0 ? info.ceilingHz : null));
 
 /**
+ * The mode budget, as a whole number of resonators.
+ *
+ * The engine's own text carries a decimal because the plain value genuinely
+ * has one — an intermediate knob position is 23.7 modes and the engine rounds
+ * it to 24 — but a count printed as `24.0` reads as a precision this control
+ * does not have. Rounded here rather than in the parameter, because both ways
+ * of making the plain value integral snap a preset asking for 1,024 modes onto
+ * 1,021.
+ */
+const modeText = computed(() => (r.modes ? String(Math.round(r.modes.plain)) : null));
+
+/**
+ * How many partials the object has — and whether that is a total or a floor.
+ *
+ * The engine bounds its own search at a million candidates, so a count sitting
+ * exactly on that bound means *at least this many*, not *this many*. Saying
+ * "1,048,576 partials" flat would be the panel asserting a total the engine
+ * explicitly did not measure.
+ */
+const MAX_CANDIDATES = 1048576;
+const availableText = computed(() => {
+  if (info.available == null) return countText(null);
+  return info.available >= MAX_CANDIDATES ? `at least ${countText(info.available)}` : countText(info.available);
+});
+
+/**
  * Whether this object has a selection to make at all.
  *
  * An air column does not: its resonances are the peaks of one delay loop and
@@ -62,13 +88,17 @@ const wall = computed(() => (info.ceilingHz && info.ceilingHz > 0 ? info.ceiling
  */
 const selectOff = computed(() => inactive('select', object.value, meta.value));
 /**
- * Whether the engine publishes where the bank runs out.
+ * Whether this build publishes where the bank runs out **as a field**, which
+ * is not the same as its having a value right now.
  *
- * It does not yet, and the strip says so rather than reporting "nothing left
- * to lose" — which would be the panel claiming an all-clear it has no way to
- * check. The figure has been asked for; it is not reconstructed here.
+ * A build that does not declare `ceiling_hz` cannot be asked, and the strip
+ * says so rather than reporting "nothing left to lose" — that would be the
+ * panel claiming an all-clear it has no way to check. But a build that
+ * declares it and publishes NaN *has* answered: there is no wall, because the
+ * bank holds every partial the object has. Reading the value alone conflated
+ * the two and printed the best state as a missing feed.
  */
-const hasCeiling = computed(() => info.ceilingHz != null);
+const hasCeiling = computed(() => info.declares('ceiling_hz'));
 </script>
 
 <template>
@@ -87,6 +117,7 @@ const hasCeiling = computed(() => info.ceilingHz != null);
       :p="r.modes"
       label="Modes"
       :size="38"
+      :text="modeText"
       :off="inactive('mode_budget', object, meta)"
       hint="resonators, not partials"
     />
@@ -94,7 +125,7 @@ const hasCeiling = computed(() => info.ceilingHz != null);
     <div class="sel__read tabular">
       <div class="sel__row">
         <span class="sel__k">this object has</span>
-        <span class="sel__v">{{ guide ? 'one loop' : countText(info.available) }}<i v-if="!guide"> partials</i></span>
+        <span class="sel__v">{{ guide ? 'one loop' : availableText }}<i v-if="!guide"> partials</i></span>
       </div>
       <div class="sel__row">
         <span class="sel__k">the bank runs</span>

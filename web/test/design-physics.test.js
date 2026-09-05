@@ -52,6 +52,7 @@ import {
   INHARM_B_MAX,
   SHAPELESS,
 } from '../src/dev/physics/resonators.js';
+import { fieldAt } from '../src/streams.js';
 import { OBJECTS } from '../src/objects.js';
 import {
   allPartialsCounted,
@@ -705,14 +706,20 @@ test('the ceiling names the limit that produced it, and only a real one', () => 
 
   // Give the bank room for every partial and the wall goes, because there is
   // nothing above the top of the series to be missing.
+  //
+  // **Not zero: unset.** A zero would be a frequency, and the panel would have
+  // to guess that this particular frequency means "no wall" — which is the
+  // zero-filled-frame fault in miniature. The engine publishes NaN for every
+  // field that does not apply, so this does too, and the display says *no
+  // wall* in ordinary ink instead of reporting a missing feed.
   const roomy = selectPartials(available, 'Lowest', available.length);
-  assert.equal(ceilingHz(s, available, roomy), 0, 'no wall when nothing was thrown away');
+  assert.ok(Number.isNaN(ceilingHz(s, available, roomy)), 'no wall when nothing was thrown away');
 
   // Raise the fundamental far enough and the same setting has no wall either,
   // because the sixty-fourth partial has cleared Nyquist.
   const high = { ...s, f0: 400 };
   const hAvail = computePartials(high);
-  assert.equal(ceilingHz(high, hAvail, selectPartials(hAvail, 'Lowest', 64)), 0);
+  assert.ok(Number.isNaN(ceilingHz(high, hAvail, selectPartials(hAvail, 'Lowest', 64))));
 });
 
 test('a waveguide never has a ceiling, because one loop gives every resonance', () => {
@@ -723,7 +730,25 @@ test('a waveguide never has a ceiling, because one loop gives every resonance', 
     ratio: 1, opening: 1, radius: 20, barSecond: 4, barThird: 9.2, nyquist: 24000, edits: [],
   };
   const all = computePartials(s);
-  assert.equal(ceilingHz(s, all, all), 0, 'a low mode count does nothing to an air column');
+  assert.ok(Number.isNaN(ceilingHz(s, all, all)), 'a low mode count does nothing to an air column');
+});
+
+test('an unset info field stays unset, and a real zero still gets through', () => {
+  // The stand-in's `put` drops a non-finite value rather than writing it, so
+  // the NaN-filled frame keeps its NaN and the page reads *not applicable*.
+  // The half that matters is the other one: a genuine zero is a measurement
+  // and has to survive, which is what stopped this being a one-line rule.
+  const frame = new Float32Array(3).fill(NaN);
+  const layout = { index: { a: 0, b: 1, c: 2 } };
+  const put = (i, v) => {
+    if (Number.isFinite(v)) frame[i] = v;
+  };
+  put(0, NaN);
+  put(1, 0);
+  put(2, 12.5);
+  assert.equal(fieldAt(frame, layout, 'a'), null, 'unset');
+  assert.equal(fieldAt(frame, layout, 'b'), 0, 'a real zero survives, because zero is a measurement');
+  assert.equal(fieldAt(frame, layout, 'c'), 12.5);
 });
 
 test('a two-dimensional object fuses far sooner than a bar does', () => {

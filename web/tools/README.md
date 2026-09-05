@@ -1,4 +1,4 @@
-# Four things that check the page, and what each one can prove
+# Five things that check the page, and what each one can prove
 
 These are in the repository rather than in a session scratchpad for the reason
 the engine's `tools/README.md` gives: a check that is lost is a check nobody
@@ -74,6 +74,27 @@ retuned partials marked and that a preset with an empty `modes` clears them
 again; that moving a control raises the edited dot; and that a saved preset
 survives a page reload, which is what proves it is in the plug-in state rather
 than in the page. It removes the preset it saved.
+
+## `contract.mjs` — the live manifest against what the panel claims
+
+```sh
+node tools/contract.mjs 4246
+```
+
+Needs no browser. It connects to a running bridge and holds the manifest to
+every claim the panel makes on screen: that every id in every object's `uses`
+is a parameter this build publishes, that both discs report polar contact
+coordinates, that every preset value names a published id and sits inside its
+range, that each preset sets all forty covered parameters, that some pair
+differs in exactly one control so the browser has an A/B to find, and that both
+stream layouts are exactly the strings the page reads by name.
+
+**Against the wire, never against the design manifest.** A page and a stand-in
+written by the same hand agree with each other by construction. Three of the
+faults caught here were two internally consistent halves disagreeing — an object
+table keyed by index while the page looked up by string, a `uses` array naming
+a parameter that had been renamed, contact coordinates the audio thread did not
+use — and every one of them was invisible until something read the live one.
 
 ## `extremes.mjs` — every control at both ends, on every object
 

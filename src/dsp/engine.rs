@@ -68,6 +68,25 @@ const READOUT_BLOCKS: u32 = 8;
 /// Marks a mode slot that no override addresses.
 const NO_EDIT: u8 = u8::MAX;
 
+/// How many blocks running the mode search may be abandoned before one is
+/// allowed to finish.
+///
+/// **Abandoning is the right default and starving is the failure it can
+/// become.** A search whose settings have changed is answering a question
+/// nobody is asking any more, so it should be dropped — that is the fix for
+/// the wedge, where a change arriving mid-search was ignored and, with a
+/// search that could not end, ignored for the rest of the session. But
+/// dropped *every* block is its own dead end: under host automation on Tune
+/// the settings move continuously, no search would ever complete, and the
+/// bank would freeze on whatever it last held while appearing to follow.
+///
+/// So a search that has been restarted this many times in a row without
+/// finishing is left alone until it does. At thirty-two blocks that is 85 ms
+/// of promptly abandoning, which covers any gesture, followed by one search
+/// run to completion, so the bank keeps moving while a knob is swept instead
+/// of waiting for the sweep to stop.
+const RESTART_LIMIT: u32 = 32;
+
 /// How far Spread pulls the two channels apart at full travel, in cents.
 /// A quarter tone, which is the same span the Fine control has.
 pub const SPREAD_MAX_CENTS: f32 = 50.0;
@@ -335,6 +354,9 @@ pub struct Resonator {
     /// The damping law the coefficients were last built with, so that a
     /// retune under the oscillator does not rebuild what has not changed.
     applied: Option<Damping>,
+    /// How many times running the mode search has been abandoned and started
+    /// again without ever finishing. See [`RESTART_LIMIT`].
+    restarts: u32,
 
     meter: [f32; 4],
     modes_frame: Vec<f32>,
@@ -383,6 +405,7 @@ impl Resonator {
             crossover: 20_000.0,
             cross_key: None,
             applied: None,
+            restarts: 0,
             meter: [0.0; 4],
             modes_frame: vec![0.0; MAX_EDITS * MODE_FIELDS],
             response: vec![-120.0; RESPONSE_POINTS],
@@ -815,11 +838,31 @@ impl Resonator {
             crossover_hz: crossover,
             sr: self.sr,
         };
-        if self.sel.needs_rebuild(&req) && !self.sel.searching() {
+        // **A search whose premise has changed is abandoned, not finished.**
+        // It used to read `&& !self.sel.searching()`, so a settings change
+        // arriving during a search was dropped on the floor and the engine
+        // went on computing the answer to the previous question. With a
+        // search that could not terminate — a membrane at 1.2 Hz has of the
+        // order of a hundred million partials under Nyquist — that meant the
+        // change was ignored *for the rest of the session*: the object read
+        // String while the bank still held the membrane's two-index modes,
+        // and no parameter would bring it back. Found by the panel agent,
+        // from three controls at their minima and a preset load.
+        //
+        // Bounding the walk stops the search running away, and that alone
+        // ends the wedge. The guard was still wrong on its own terms, so it
+        // is gone — up to [`RESTART_LIMIT`], which is what stops the cure
+        // becoming the disease: restarting on *every* block would mean no
+        // search ever finished under continuous automation, and a bank frozen
+        // on its old set looks exactly like one that is following.
+        if self.sel.needs_rebuild(&req) && self.restarts < RESTART_LIMIT {
+            if self.sel.searching() {
+                self.restarts += 1;
+            }
             self.sel.start(req);
         }
-        if self.sel.searching() {
-            self.sel.step(select::WORK_PER_BLOCK);
+        if self.sel.searching() && self.sel.step(select::WORK_PER_BLOCK) {
+            self.restarts = 0;
         }
 
         let fresh = self.sel.generation() != self.loaded;

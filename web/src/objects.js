@@ -152,7 +152,7 @@ export const OBJECTS = [
     twoD: false,
     short: 'a bar clamped at one end',
     blurb:
-      'The same bar with one end held instead of free — a tuning fork’s prong, a music box’s tooth, an electric piano’s tine. Clamping it throws the partials much further apart: 1, 6.27, 17.5, where the free bar gives 2.76 and 5.40. The second partial is over two and a half octaves up, so there is nothing in the range where a glockenspiel clangs, and what is left reads as a pure and slightly hollow pitch.',
+      'The same bar with one end held instead of free — a tuning fork’s prong, a music box’s tooth, an electric piano’s tine. Clamping it throws the partials much further apart: an ideal clamped–free bar gives 1, 6.27, 17.5, where the free bar gives 2.76 and 5.40. The second partial is over two and a half octaves up, so there is nothing in the range where a glockenspiel clangs, and what is left reads as a pure and slightly hollow pitch. A real tine is weighted and tuned and does not sit exactly there — this is the bare equation.',
     derivation: 'closed form',
     source: 'the transverse beam equation clamped at one end: frequencies as the square of the roots of cos x · cosh x = −1',
     uses: 'Electric piano, music box and bell-like sine tones. The one object here that gives a near-pure pitch out of a struck body, because its overtones are too far up to argue with the fundamental — and moving Hit towards the clamped end is what puts the bark back in.',
