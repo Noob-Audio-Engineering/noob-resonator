@@ -1100,6 +1100,61 @@ fn the_tail_is_silent_when_nothing_was_left_out() {
     );
 }
 
+#[test]
+fn a_string_at_the_default_budget_never_needs_the_statistical_tail() {
+    // `RESOCHORD.md` §7.3 proposes that above the resolvability crossover the
+    // harmonic objects should be extended by a tuned loop rather than by the
+    // statistical tail, because a loop's partials are already in the right
+    // places and it costs O(1). **For this engine the premise does not hold**,
+    // and this test is what says so rather than an argument.
+    //
+    // A string's partials are `n·f₀`, so it has `f_max/f₀` of them below the
+    // top of the band: a thousand at 20 Hz, which is the bottom of the Tune
+    // control, and forty-five at 440 Hz. The default budget is 1024. So the
+    // bank holds the whole object at every tuning the control offers, there
+    // is nothing above the crossover for a tuned loop to cover, and the
+    // string is in the same position `RESOCHORD.md` puts Beam and Marimba in:
+    // it runs out of partials before the band does.
+    //
+    // The measurement is the tail's own contribution to the audio, as the
+    // difference between rendering with it and without it — not the level it
+    // reports, which is the thing being checked.
+    for tune in [20.0f32, 27.5, 55.0, 110.0, 220.0, 440.0, 1000.0, 4000.0] {
+        for decay in [0.5f32, 2.0, 8.0, 30.0] {
+            let set = Settings {
+                object: 2,
+                tune_hz: tune,
+                decay_s: decay,
+                bright_db_oct: -3.0,
+                hit: Point::new(0.107, 0.2),
+                pos_l: Point::new(0.213, 0.3),
+                pos_r: Point::new(0.379, 0.7),
+                ..Settings::default()
+            };
+            assert_eq!(set.modes, 1024, "this test is about the shipped budget");
+            let with = ring_engine(&set, 1 << 15).0;
+            let without = ring_engine(&Settings { tail: false, ..set }, 1 << 15).0;
+            let power = |v: &[f32]| {
+                let s: f64 = v.iter().map(|x| (*x as f64) * (*x as f64)).sum();
+                10.0 * (s / v.len() as f64).max(1e-30).log10()
+            };
+            let added: Vec<f32> = with
+                .iter()
+                .zip(without.iter())
+                .map(|(a, b)| a - b)
+                .collect();
+            let rel = power(&added) - power(&without);
+            // Sixty decibels below the object it is supposed to be completing
+            // is not a contribution; it is silence with a level meter on it.
+            assert!(
+                rel < -60.0,
+                "a string at {tune} Hz with a {decay} s decay had a tail {rel:.1} dB under the \
+                 bank, so the bank is not holding the whole object after all"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The device
 // ---------------------------------------------------------------------------
@@ -2575,6 +2630,135 @@ fn a_slot_note_recalls_a_stored_chord_and_a_played_note_replaces_it() {
     assert!(
         (1200.0 * (got / want).log2()).abs() < 1.0,
         "the recalled fourth sounds at {got:.2} Hz and should be {want:.2}"
+    );
+}
+
+#[test]
+fn a_slot_recalled_from_midi_reports_that_the_parameter_is_not_in_charge() {
+    // **`voice_source` does not mean "a key is down". It means "the control
+    // is not in charge"** — which is the question a face actually asks,
+    // because what it does with the answer is grey a knob that is showing a
+    // pitch other than the one sounding.
+    //
+    // The two readings agree for a held note and **come apart for a chord
+    // recalled from the keyboard**: the slot's pitches sound while the voice
+    // parameters still hold whatever the user last set, and nothing wrote
+    // them. Defined as "a key is down" the field says 0 there — *the
+    // parameters are in charge* — which is false, and it is the same failure
+    // as a held note with the one field that would reveal it turned off.
+    //
+    // A slot recalled from the **panel** is the other way round and reads 0
+    // correctly: the page writes the pitches through the ordinary edit path,
+    // so the knobs hold what is sounding and are authoritative.
+    //
+    // This is the shape of fault `is_2d()` was: a predicate answering two
+    // questions that agree on every case anyone had tried, until one case
+    // broke the coincidence.
+    let slots = Arc::new(SlotTable::new());
+    slots.load_json(&json!({
+        "slots": [{ "semis": [0.0, 7.0, 16.0, 0.0, 0.0, 0.0], "voices": 3 }]
+    }));
+    // Deliberately not the slot's chord, so that "the parameters are in
+    // charge" and "the slot is" are distinguishable by ear as well as by
+    // field.
+    let manual = [0.0f32, 3.0, 8.0, 0.0, 0.0, 0.0];
+    let set = Settings {
+        object: 2,
+        tune_hz: 110.0,
+        midi_voices: true,
+        voices: 3,
+        voice_semis: manual,
+        ..Settings::default()
+    };
+
+    let settle = |proc: &mut Processor| {
+        let mut l = vec![0.0f32; bank::BLOCK];
+        let mut r = vec![0.0f32; bank::BLOCK];
+        for _ in 0..600 {
+            proc.configure(&set);
+            proc.process(&mut l, &mut r);
+        }
+    };
+    // Voice `v`'s own fundamental, off the published table.
+    let root_of = |proc: &Processor, v: usize| -> f32 {
+        proc.engine()
+            .modes_frame()
+            .to_vec()
+            .chunks(MODE_FIELDS)
+            .find(|row| row[2] > 0.0 && row[1] as usize == v && row[0] == 1.0)
+            .map(|row| row[2])
+            .unwrap_or(0.0)
+    };
+
+    // Nothing played: the parameters are what is sounding and what is shown.
+    let mut panel = Processor::new(SR);
+    panel.set_slots(slots.clone());
+    settle(&mut panel);
+    let f = panel.engine().info_frame();
+    for v in 0..3 {
+        assert_eq!(
+            f[19 + v],
+            0.0,
+            "voice {v} is sounding its own parameter and the field says otherwise"
+        );
+    }
+    let want_manual = 110.0 * 2f32.powf(manual[1] / 12.0);
+    assert!(
+        (1200.0 * (root_of(&panel, 1) / want_manual).log2()).abs() < 1.0,
+        "the manual chord is not what is sounding"
+    );
+
+    // The same chord recalled from the keyboard. The pitches move to the
+    // slot's and the parameters do not: the knob now shows a pitch that is
+    // not sounding, which is exactly what the field exists to say.
+    let mut midi = Processor::new(SR);
+    midi.set_slots(slots.clone());
+    midi.note_on(SLOT_NOTES[0]);
+    settle(&mut midi);
+    let want_slot = 110.0 * 2f32.powf(7.0 / 12.0);
+    assert!(
+        (1200.0 * (root_of(&midi, 1) / want_slot).log2()).abs() < 1.0,
+        "the recalled fifth is not what is sounding: voice 1 is at {:.2} Hz and the slot \
+         asked for {want_slot:.2}",
+        root_of(&midi, 1)
+    );
+    assert_eq!(
+        set.voice_semis, manual,
+        "a recall from MIDI wrote the voice parameters, and it must only override them"
+    );
+    let f = midi.engine().info_frame();
+    for v in 0..3 {
+        assert_eq!(
+            f[19 + v],
+            1.0,
+            "voice {v} is sounding a slot's pitch while its parameter shows another, and the \
+             field still claims the parameter is in charge"
+        );
+    }
+    for v in 3..CHORD_VOICES {
+        assert!(
+            f[19 + v].is_nan(),
+            "the slot asked for three voices and voice {v} reports a source"
+        );
+    }
+
+    // A surface takes no voices, so the recall never reached its pitch and
+    // its one parameter really is in charge. The field has to say so, or it
+    // greys a control that is working.
+    let mut surface = Processor::new(SR);
+    surface.set_slots(slots.clone());
+    surface.note_on(SLOT_NOTES[0]);
+    let flat = Settings { object: 3, ..set };
+    let mut l = vec![0.0f32; bank::BLOCK];
+    let mut r = vec![0.0f32; bank::BLOCK];
+    for _ in 0..600 {
+        surface.configure(&flat);
+        surface.process(&mut l, &mut r);
+    }
+    let f = surface.engine().info_frame();
+    assert_eq!(
+        f[19], 0.0,
+        "a surface cannot take a recalled chord and its own parameter is what sounds"
     );
 }
 

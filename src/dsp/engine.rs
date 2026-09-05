@@ -396,6 +396,10 @@ pub struct Resonator {
     /// Which voices MIDI is holding, for the readout only: the engine does
     /// not decide this and does not act on it.
     held: [bool; CHORD_VOICES],
+    /// Whether a chord recalled from a slot note is what is sounding, which
+    /// takes every voice at once rather than one at a time. Readout only,
+    /// like [`Self::held`].
+    from_slot: bool,
 
     meter: [f32; 4],
     modes_frame: Vec<f32>,
@@ -448,6 +452,7 @@ impl Resonator {
             restarts: 0,
             readout_f0: 220.0,
             held: [false; CHORD_VOICES],
+            from_slot: false,
             meter: [0.0; 4],
             modes_frame: vec![0.0; MAX_EDITS * MODE_FIELDS],
             response: vec![-120.0; RESPONSE_POINTS],
@@ -517,11 +522,19 @@ impl Resonator {
         &self.guides[0][0]
     }
 
-    /// Record which voices MIDI is holding. Readout only.
+    /// Record what MIDI is doing to the voices. Readout only.
+    ///
+    /// **Both routes are recorded, because both take the pitch away from the
+    /// parameter**: notes held one voice at a time, and a chord recalled from
+    /// a slot note, which takes all of them at once and stands until a played
+    /// note replaces it. The caller passes a default [`Voicing`] when the
+    /// override is not in force at all, which is what keeps this honest for
+    /// an object that cannot take voices.
     pub fn set_held(&mut self, v: crate::dsp::Voicing) {
         for k in 0..CHORD_VOICES {
             self.held[k] = v.is_held(k);
         }
+        self.from_slot = v.from_slot();
     }
 
     /// How many voices the current object is actually sounding.
@@ -685,13 +698,26 @@ impl Resonator {
             self.voice_available(3),
             self.voice_available(4),
             self.voice_available(5),
-            // **Where each voice's pitch came from**, so a face can say
-            // which are held and which are free rather than inferring it.
-            // 0 is a manual pitch, 1 is a note being held; NaN is a voice
-            // that is not sounding. A slot recall from the panel writes the
-            // parameters through the ordinary path, so it arrives here as
-            // manual — which is true, and the page knows it was a slot
-            // because the page did the writing.
+            // **Whether each voice's pitch comes from its parameter**, so a
+            // face can grey a control that is showing a pitch other than the
+            // one sounding. 0 is the parameter's own pitch, 1 is a pitch
+            // that came from somewhere else; NaN is a voice that is not
+            // sounding.
+            //
+            // **The field is that predicate and not "a key is down"**, and
+            // the difference is a fault this project has already found once
+            // in `is_2d()`: two questions that agree on every case anyone
+            // tried, until one comes apart. They agree for a held note. They
+            // come apart for a chord recalled from a **slot note**, which
+            // sounds the slot's pitches while the voice parameters still
+            // hold the manual chord and nothing wrote them — reported as
+            // "the parameter is in charge" that would be false, and false in
+            // exactly the way the field exists to prevent.
+            //
+            // A slot recalled from the **panel** is the other way round and
+            // reads 0, correctly: the page writes the pitches through the
+            // ordinary edit path, so the knobs hold what is sounding and are
+            // authoritative.
             self.voice_source(0),
             self.voice_source(1),
             self.voice_source(2),
@@ -705,7 +731,11 @@ impl Resonator {
         if v >= self.set.shape().voice_count() as usize {
             return f32::NAN;
         }
-        if self.held[v] { 1.0 } else { 0.0 }
+        if self.held[v] || self.from_slot {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     /// How many partials voice `v` has under the ceiling, or NaN if it is not

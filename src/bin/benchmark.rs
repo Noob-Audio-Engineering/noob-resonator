@@ -911,7 +911,17 @@ fn tail_section() -> Section {
         "Above the frequency where the modal overlap factor reaches one, the partials merge into a \
          continuum and no listener or analyser can resolve them individually. The tail covers that \
          region with a feedback delay network whose loss filters are fitted to the same `T60(f)` \
-         the bank uses and whose level is set from the energy the selection actually left behind.",
+         the bank uses and whose level is set from the energy the selection actually left behind.\n\n\
+         **Which objects need one is a question with a measured answer, and it is not the obvious \
+         one.** The rows below give each object's crossover, how many of its partials the bank is \
+         holding, and what the tail is doing. A dense inharmonic surface exhausts any budget and \
+         the tail carries real level; a **String** does not, at any tuning the control offers. \
+         Twenty hertz is the bottom of the Tune range and a string there has a thousand partials \
+         below 20 kHz, against a default budget of 1024 — so the bank holds the whole object and \
+         the tail sits at its silent floor. The air columns never reach this code at all: a \
+         waveguide publishes every resonance up to Nyquist for the same cost whatever number that \
+         is, so for a Pipe or a Tube the tuned loop is not an extension above a crossover, it is \
+         the entire object.",
     );
     for sr in [44_100.0f32, 48_000.0, 96_000.0, 192_000.0] {
         let t = tail::Tail::new(sr);
@@ -927,6 +937,10 @@ fn tail_section() -> Section {
         (3usize, 110.0f32, 512usize),
         (4, 110.0, 512),
         (0, 220.0, 512),
+        (2, 220.0, 1024),
+        // The bottom of the Tune range, where a string has the most partials
+        // it can ever have and the budget is the one it ships with.
+        (2, 20.0, 1024),
     ] {
         let set = Settings {
             object,
