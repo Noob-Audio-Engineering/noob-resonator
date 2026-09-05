@@ -119,11 +119,31 @@ function check(m) {
   }
   const modes = (m.streams || []).find((s) => s.id === 'modes');
   const info = (m.streams || []).find((s) => s.id === 'info');
+  /**
+   * **The fields the page reads, present — not the layout, identical.**
+   *
+   * This asserted byte equality once and failed the moment the engine appended
+   * `voice_available`, which is a field arriving rather than a contract
+   * breaking. That contradicted the page's own design: every stream field is
+   * looked up by name precisely so the engine can add one without breaking a
+   * panel, and `test/layout.test.js` pins that a longer layout does not break a
+   * shorter reader. A probe that forbids growth is a probe that will be
+   * silenced the first time it is right about something.
+   */
   const want = {
-    modes: 'i,j,hz,db_l,db_r,t60_s,db_bare,base_hz',
-    info: 'modes_used,modes_available,crossover_hz,tail_db,limit_gr_db,inharm_b,column_m,loop_ms,open_hz,engine,build,f0_hz,ceiling_hz',
+    modes: ['i', 'j', 'hz', 'db_l', 'db_r', 't60_s', 'db_bare', 'base_hz'],
+    info: ['modes_used', 'modes_available', 'crossover_hz', 'tail_db', 'limit_gr_db', 'inharm_b',
+           'column_m', 'loop_ms', 'open_hz', 'engine', 'build', 'f0_hz', 'ceiling_hz'],
   };
-  if (modes?.meta?.layout !== want.modes) fail(`modes layout is ${JSON.stringify(modes?.meta?.layout)}`);
-  if (info?.meta?.layout !== want.info) fail(`info layout is ${JSON.stringify(info?.meta?.layout)}`);
-  if (modes?.meta?.layout === want.modes && info?.meta?.layout === want.info) ok('both layouts are what the page reads by name');
+  for (const [id, names] of Object.entries(want)) {
+    const stream = id === 'modes' ? modes : info;
+    // A field may be declared as `name` or as `name[n]` for a run of slots.
+    const have = new Set(String(stream?.meta?.layout || '').split(',').map((n) => n.trim().replace(/\[\d+\]$/, '')));
+    const missing = names.filter((n) => !have.has(n));
+    if (missing.length) fail(`the ${id} layout is missing what the page reads: ${missing.join(', ')}`);
+    else {
+      const extra = [...have].filter((n) => n && !names.includes(n));
+      ok(`${id}: every field the page reads is present` + (extra.length ? ` (and ${extra.join(', ')}, which it does not read yet)` : ''));
+    }
+  }
 }

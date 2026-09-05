@@ -240,12 +240,14 @@ impl Object {
     /// Whether the object is a **surface**, so the second contact coordinate
     /// means something.
     ///
-    /// This is about the *contacts*, and [`has_two_indices`](Self::has_two_indices)
-    /// is about the *partials*. They agree on every physical object and
-    /// disagree on the chord, whose partials are numbered `(voice, harmonic)`
-    /// while each voice is a line with one coordinate along it. Asking one
-    /// question and answering the other is the fault this project has spent a
-    /// day finding in other places, so the two are separate here.
+    /// **This is about the *contacts*, and [`Shape::uses_j`] is about the
+    /// *partials*.** They agree on every unvoiced object and come apart the
+    /// moment a line is tuned to more than one pitch: its partials then need
+    /// a second index for the voice, while its contacts are still a position
+    /// along one line. This method used to answer both questions, which was
+    /// only ever right by coincidence — and a test of mine derived the
+    /// contact coordinates from the *walk* and so was wrong for the same
+    /// reason. Ask the contacts about contacts.
     pub fn is_2d(self) -> bool {
         matches!(
             self,
