@@ -18,6 +18,11 @@ publish = false
 # each plug-in owns its own description --- the manager has no list of them.
 [package.metadata.noob]
 kind = "effect"
+# The Audio Unit component subtype: four characters, unique to this plug-in
+# and **never changed**. macOS identifies a component by type, subtype and
+# manufacturer, so a session that loaded this one looks it up by "Res1"
+# and finds nothing if it moves.
+au_subtype = "Res1"
 name = "Noob Resonator"
 accent = "#4fd6c8"
 tagline = "A modal and waveguide resonator whose mode budget is spent by contribution rather than by frequency."
